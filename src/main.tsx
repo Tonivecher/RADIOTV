@@ -29,7 +29,7 @@ class StartupBoundary extends React.Component<
           gap: 16,
           padding: 24,
           textAlign: 'center',
-          color: '#fff8ec',
+          color: '#dfd3c0',
           background: '#29251f',
         }}
       >

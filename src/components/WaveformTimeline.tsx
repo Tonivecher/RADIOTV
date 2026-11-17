@@ -64,12 +64,12 @@ const readWaveColors = (): WaveColors => {
   const s = getComputedStyle(document.documentElement);
   const v = (name: string, fallback: string) => s.getPropertyValue(name).trim() || fallback;
   return {
-    unplayed: v('--wave-unplayed', 'rgba(162,176,196,0.18)'),
+    unplayed: v('--wave-unplayed', 'rgba(223,211,192,0.52)'),
     played: v('--wave-played', '#7c9ff0'),
     hot: v('--wave-hot', '#58ad99'),
     mirror: v('--wave-mirror', 'rgba(137,126,194,0.36)'),
     accent: v('--accent-primary', '#7c9ff0'),
-    text: v('--text-primary', '#ffffff'),
+    text: v('--text-primary', '#dfd3c0'),
   };
 };
 
