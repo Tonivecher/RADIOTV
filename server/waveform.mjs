@@ -1,28 +1,28 @@
-import fs from 'node:fs';
 import { spawn } from 'node:child_process';
+import { FFMPEG_BIN } from './media.mjs';
 
-const FFMPEG_BINS = ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', 'ffmpeg'];
-
-function resolveFfmpegBin() {
-  for (const candidate of FFMPEG_BINS) {
-    if (candidate === 'ffmpeg' || fs.existsSync(candidate)) {
-      return candidate;
-    }
-  }
-  return 'ffmpeg';
-}
-
-const FFMPEG_BIN = resolveFfmpegBin();
+const DEFAULT_WAVEFORM_POINTS = 240;
+const DEFAULT_HEATMAP_SEGMENTS = 60;
+const PCM_SAMPLE_RATE_HZ = 100;
+const MAX_DURATION_HOURS = 6;
+const BYTES_PER_SAMPLE = 2;
+const MAX_PCM_BYTES =
+  MAX_DURATION_HOURS * 3600 * PCM_SAMPLE_RATE_HZ * BYTES_PER_SAMPLE;
+const MIN_BYTES_PER_POINT = 4;
+const FFMPEG_TIMEOUT_MS = 180_000;
+const QUEUE_STEP_DELAY_MS = 150;
+const INT16_MAX_AMPLITUDE = 32768.0;
+const PEAK_FLOOR = 0.08;
+const PEAK_GAMMA = 0.85;
 
 /**
  * Normalizes raw energy values into [0.08 .. 1.0] with subtle 3-point smoothing
- * and crisp dynamic contrast for SoundCloud/live-radio style rendering.
+ * and crisp dynamic contrast for live-radio waveform rendering.
  */
-export function normalizePeaks(rawValues, points = 240) {
+function normalizePeaks(rawValues, points = DEFAULT_WAVEFORM_POINTS) {
   const n = rawValues.length;
   if (n === 0) return [];
 
-  // Light smoothing combined with sharp transient preservation
   const blended = new Float64Array(n);
   for (let i = 0; i < n; i++) {
     const prev = rawValues[Math.max(0, i - 1)];
@@ -40,28 +40,129 @@ export function normalizePeaks(rawValues, points = 240) {
   }
 
   if (max === 0) return new Array(points).fill(0);
+
   const span = max - min || 1;
   const result = new Array(points);
   for (let i = 0; i < points; i++) {
     const idx = Math.min(n - 1, Math.floor((i / points) * n));
     const unit = Math.max(0, Math.min(1, (blended[idx] - min) / span));
-    // Slight gamma curve (0.85) so mid-grooves and peaks look full and expressive
-    const curved = Math.pow(unit, 0.85);
-    const val = 0.08 + curved * 0.92;
+    const curved = Math.pow(unit, PEAK_GAMMA);
+    const val = PEAK_FLOOR + curved * (1 - PEAK_FLOOR);
     result[i] = Number(val.toFixed(3));
   }
 
   return result;
 }
 
+function decodePcmToRawPeaks(pcm, points) {
+  const totalSamples = Math.floor(pcm.length / BYTES_PER_SAMPLE);
+  const samplesPerBucket = Math.max(1, Math.floor(totalSamples / points));
+  const raw = new Float64Array(points);
+
+  for (let b = 0; b < points; b++) {
+    const startSample = b * samplesPerBucket;
+    const endSample =
+      b === points - 1
+        ? totalSamples
+        : Math.min(totalSamples, startSample + samplesPerBucket);
+    const count = Math.max(1, endSample - startSample);
+    let sumSq = 0;
+    let peak = 0;
+
+    for (let s = startSample; s < endSample; s++) {
+      const val =
+        Math.abs(pcm.readInt16LE(s * BYTES_PER_SAMPLE)) / INT16_MAX_AMPLITUDE;
+      sumSq += val * val;
+      if (val > peak) peak = val;
+    }
+
+    const rms = Math.sqrt(sumSq / count);
+    raw[b] = rms * 0.65 + peak * 0.35;
+  }
+
+  return raw;
+}
+
+function extractFfmpegPeaks(filepath, points = DEFAULT_WAVEFORM_POINTS) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let totalBytes = 0;
+    let failed = false;
+    let settled = false;
+
+    const proc = spawn(
+      FFMPEG_BIN,
+      [
+        '-nostdin',
+        '-v',
+        'error',
+        '-i',
+        filepath,
+        '-vn',
+        '-ac',
+        '1',
+        '-ar',
+        String(PCM_SAMPLE_RATE_HZ),
+        '-f',
+        's16le',
+        'pipe:1',
+      ],
+      { stdio: ['ignore', 'pipe', 'ignore'] }
+    );
+
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(err);
+    };
+
+    const timer = setTimeout(() => {
+      failed = true;
+      proc.kill('SIGKILL');
+      fail(new Error('ffmpeg waveform timeout'));
+    }, FFMPEG_TIMEOUT_MS);
+
+    proc.stdout.on('data', (chunk) => {
+      if (totalBytes + chunk.length <= MAX_PCM_BYTES) {
+        chunks.push(chunk);
+        totalBytes += chunk.length;
+      } else {
+        failed = true;
+        proc.kill('SIGKILL');
+      }
+    });
+
+    proc.on('error', fail);
+
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      if (settled) return;
+      if (failed || code !== 0 || totalBytes < points * MIN_BYTES_PER_POINT) {
+        return fail(new Error(`ffmpeg exited with ${code}`));
+      }
+
+      settled = true;
+      const pcm = Buffer.concat(chunks, totalBytes);
+      const raw = decodePcmToRawPeaks(pcm, points);
+      resolve(normalizePeaks(raw, points));
+    });
+  });
+}
+
 /**
- * Stage 2: Background ffmpeg PCM waveform refinement queue (-ac 1 -ar 100 -f s16le)
+ * Background ffmpeg PCM waveform refinement queue (-ac 1 -ar 100 -f s16le).
  */
 const ffmpegQueue = [];
 const inFlightSetIds = new Set();
 let isWorkerBusy = false;
 
-export function scheduleFfmpegWaveform(setId, filepath, onComplete, points = 240) {
+export function scheduleFfmpegWaveform(
+  setId,
+  filepath,
+  onComplete,
+  points = DEFAULT_WAVEFORM_POINTS
+) {
   if (inFlightSetIds.has(setId)) return;
   inFlightSetIds.add(setId);
   ffmpegQueue.push({ setId, filepath, onComplete, points });
@@ -86,100 +187,22 @@ function processNextFfmpegJob() {
       inFlightSetIds.delete(job.setId);
       isWorkerBusy = false;
       if (ffmpegQueue.length > 0) {
-        setTimeout(processNextFfmpegJob, 150);
+        setTimeout(processNextFfmpegJob, QUEUE_STEP_DELAY_MS);
       }
     });
-}
-
-export function extractFfmpegPeaks(filepath, points = 240) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    let totalBytes = 0;
-    const maxBytes = 6 * 3600 * 100 * 2; // Cap at 6 hours of 100Hz s16le (~4.3MB)
-
-    const proc = spawn(
-      FFMPEG_BIN,
-      [
-        '-nostdin',
-        '-v',
-        'error',
-        '-i',
-        filepath,
-        '-vn',
-        '-ac',
-        '1',
-        '-ar',
-        '100',
-        '-f',
-        's16le',
-        'pipe:1',
-      ],
-      { stdio: ['ignore', 'pipe', 'ignore'] }
-    );
-
-    let failed = false;
-    const timer = setTimeout(() => {
-      failed = true;
-      proc.kill('SIGKILL');
-      reject(new Error('ffmpeg waveform timeout'));
-    }, 180000); // Long DJ sets need more than 25 seconds on the production CPU.
-
-    proc.stdout.on('data', (chunk) => {
-      if (totalBytes + chunk.length <= maxBytes) {
-        chunks.push(chunk);
-        totalBytes += chunk.length;
-      } else {
-        failed = true;
-        proc.kill('SIGKILL');
-      }
-    });
-
-    proc.on('error', (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-
-    proc.on('close', (code) => {
-      clearTimeout(timer);
-      if (failed || code !== 0 || totalBytes < points * 4) {
-        return reject(new Error(`ffmpeg exited with ${code}`));
-      }
-
-      const pcm = Buffer.concat(chunks, totalBytes);
-      const totalSamples = Math.floor(pcm.length / 2);
-      const samplesPerBucket = Math.max(1, Math.floor(totalSamples / points));
-      const raw = new Float64Array(points);
-
-      for (let b = 0; b < points; b++) {
-        const startSample = b * samplesPerBucket;
-        const endSample =
-          b === points - 1
-            ? totalSamples
-            : Math.min(totalSamples, startSample + samplesPerBucket);
-        let sumSq = 0;
-        let peak = 0;
-        const count = Math.max(1, endSample - startSample);
-
-        for (let s = startSample; s < endSample; s++) {
-          const val = Math.abs(pcm.readInt16LE(s * 2)) / 32768.0;
-          sumSq += val * val;
-          if (val > peak) peak = val;
-        }
-
-        const rms = Math.sqrt(sumSq / count);
-        raw[b] = rms * 0.65 + peak * 0.35;
-      }
-
-      resolve(normalizePeaks(raw, points));
-    });
-  });
 }
 
 /**
- * Computes a 60-segment reaction density heatmap (0.0 .. 1.0) across the set duration.
+ * Computes a reaction density heatmap (0.0 .. 1.0) across the set duration.
  */
-export function computeHeatmap(moments, durationSec, segments = 60, peaks = null) {
+export function computeHeatmap(
+  moments,
+  durationSec,
+  segments = DEFAULT_HEATMAP_SEGMENTS
+) {
+  if (!(segments > 0)) return [];
   if (!(durationSec > 0)) return new Array(segments).fill(0);
+
   const safeDuration = Number(durationSec);
   const buckets = new Float64Array(segments);
 

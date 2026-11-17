@@ -6,13 +6,35 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SECRET_FILE = path.join(__dirname, '.secret');
+const MIN_SECRET_LENGTH = 32;
+
+const DEFAULT_POW_DIFFICULTY = 3;
+const CHALLENGE_TTL_MS = 10 * 60 * 1000;
+const CHALLENGE_SIG_LENGTH = 24;
+const MAX_USED_CHALLENGES = 5000;
+const MAX_NONCE_LENGTH = 64;
+
+const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const PIN_SALT_BYTES = 16;
+const PIN_SCRYPT_KEYLEN = 64;
+
+const RATE_LIMIT_TTL_MS = 600_000;
+const RATE_LIMIT_PRUNE_THRESHOLD = 10_000;
+const CHAT_SPAM_WINDOW_MS = 60_000;
+const CHAT_SPAM_PRUNE_THRESHOLD = 1000;
+const CHAT_SPAM_PRUNE_INTERVAL_MS = 600_000;
+const MAX_XFF_HOPS = 10;
 
 function loadOrCreateSecret() {
-  if (process.env.RADIOTV_SECRET) return process.env.RADIOTV_SECRET;
+  if (process.env.RADIOTV_SECRET) {
+    return process.env.RADIOTV_SECRET;
+  }
   try {
     if (fs.existsSync(SECRET_FILE)) {
       const val = fs.readFileSync(SECRET_FILE, 'utf8').trim();
-      if (val.length >= 32) return val;
+      if (val.length >= MIN_SECRET_LENGTH) {
+        return val;
+      }
     }
   } catch {
     // ignore read error
@@ -28,7 +50,7 @@ function loadOrCreateSecret() {
 
 const SERVER_SECRET = loadOrCreateSecret();
 
-export const ALLOWED_REACTIONS = [
+const ALLOWED_REACTIONS = [
   'fire',
   'hypnotic',
   'subbass',
@@ -59,37 +81,57 @@ export const AVATAR_PALETTE = [
   '#E879F9',
 ];
 
-// Active PoW challenges and used challenge IDs
+// Active PoW challenges and used challenge IDs mapped to expiration timestamp
 const activeChallenges = new Map();
-const usedChallenges = new Set();
+const usedChallenges = new Map();
 
-function cleanupChallenges() {
-  const now = Date.now();
+function cleanupChallenges(now = Date.now()) {
   for (const [id, data] of activeChallenges.entries()) {
     if (data.expiresAt < now) {
       activeChallenges.delete(id);
     }
   }
-  if (usedChallenges.size > 5000) {
-    usedChallenges.clear();
+  for (const [id, expiresAt] of usedChallenges.entries()) {
+    if (expiresAt < now) {
+      usedChallenges.delete(id);
+    }
+  }
+  while (usedChallenges.size > MAX_USED_CHALLENGES) {
+    const oldestKey = usedChallenges.keys().next().value;
+    usedChallenges.delete(oldestKey);
   }
 }
 
-function hmacHex(payload) {
-  return crypto.createHmac('sha256', SERVER_SECRET).update(payload).digest('hex');
+function hmacDigest(payload, encoding = 'hex') {
+  return crypto.createHmac('sha256', SERVER_SECRET).update(payload).digest(encoding);
+}
+
+function timingSafeEqualStrings(aStr, bStr, encoding = 'utf8') {
+  if (typeof aStr !== 'string' || typeof bStr !== 'string') {
+    return false;
+  }
+  try {
+    const a = Buffer.from(aStr, encoding);
+    const b = Buffer.from(bStr, encoding);
+    return a.length > 0 && a.length === b.length && crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
 }
 
 /**
  * Generates a cryptographic PoW challenge with difficulty 3 ('000' hex prefix)
  * and a signed HMAC timestamp token embedded in challengeId.
  */
-export function createChallenge(difficulty = 3) {
-  cleanupChallenges();
+export function createChallenge(difficulty = DEFAULT_POW_DIFFICULTY) {
+  const now = Date.now();
+  cleanupChallenges(now);
+
   const nonceId = crypto.randomBytes(6).toString('hex');
   const prefix = crypto.randomBytes(12).toString('hex');
-  const expiresAt = Date.now() + 10 * 60 * 1000; // 10 min TTL
+  const expiresAt = now + CHALLENGE_TTL_MS;
   const rawData = `${nonceId}.${prefix}.${difficulty}.${expiresAt}`;
-  const sig = hmacHex(rawData).slice(0, 24);
+  const sig = hmacDigest(rawData, 'hex').slice(0, CHALLENGE_SIG_LENGTH);
   const challengeId = `${rawData}.${sig}`;
 
   activeChallenges.set(challengeId, {
@@ -109,13 +151,17 @@ export function createChallenge(difficulty = 3) {
 }
 
 /**
- * Verifies a PoW challenge solution: sha256(prefix + nonce).startsWith('000')
+ * Verifies a PoW challenge solution: sha256(prefix + nonce).startsWith('0'.repeat(difficulty))
  */
 export function verifyChallenge(challengeId, nonce) {
   if (!challengeId || typeof challengeId !== 'string') {
     return { ok: false, error: 'Отсутствует идентификатор PoW-челленджа' };
   }
-  if (nonce === undefined || nonce === null || String(nonce).length > 64) {
+  if (
+    nonce === undefined ||
+    nonce === null ||
+    String(nonce).length > MAX_NONCE_LENGTH
+  ) {
     return { ok: false, error: 'Некорректный nonce PoW-челленджа' };
   }
   if (usedChallenges.has(challengeId)) {
@@ -123,7 +169,7 @@ export function verifyChallenge(challengeId, nonce) {
   }
 
   let prefix = '';
-  let difficulty = 3;
+  let difficulty = DEFAULT_POW_DIFFICULTY;
   let expiresAt = 0;
 
   const stored = activeChallenges.get(challengeId);
@@ -135,19 +181,18 @@ export function verifyChallenge(challengeId, nonce) {
     difficulty = stored.difficulty;
     expiresAt = stored.expiresAt;
   } else {
-    // Verify via embedded HMAC signature
     const parts = challengeId.split('.');
     if (parts.length !== 5) {
       return { ok: false, error: 'Недействительный формат челленджа' };
     }
     const [nonceId, pfx, diffStr, expStr, sig] = parts;
     const rawData = `${nonceId}.${pfx}.${diffStr}.${expStr}`;
-    const expectedSig = hmacHex(rawData).slice(0, 24);
-    if (sig !== expectedSig) {
+    const expectedSig = hmacDigest(rawData, 'hex').slice(0, CHALLENGE_SIG_LENGTH);
+    if (!timingSafeEqualStrings(sig, expectedSig, 'utf8')) {
       return { ok: false, error: 'Неверная подпись челленджа' };
     }
     prefix = pfx;
-    difficulty = Number(diffStr) || 3;
+    difficulty = Number(diffStr) || DEFAULT_POW_DIFFICULTY;
     expiresAt = Number(expStr) || 0;
   }
 
@@ -170,45 +215,26 @@ export function verifyChallenge(challengeId, nonce) {
     stored.used = true;
     activeChallenges.delete(challengeId);
   }
-  usedChallenges.add(challengeId);
+  usedChallenges.set(challengeId, expiresAt);
 
   return { ok: true, hash };
-}
-
-/**
- * Helper to solve a PoW challenge (useful for testing / server-side verification)
- */
-export function solveChallenge(prefix, difficulty = 3) {
-  const target = '0'.repeat(difficulty);
-  let nonce = 0;
-  while (true) {
-    const hash = crypto
-      .createHash('sha256')
-      .update(prefix + String(nonce))
-      .digest('hex');
-    if (hash.startsWith(target)) {
-      return String(nonce);
-    }
-    nonce++;
-  }
 }
 
 /**
  * PIN hashing & verification via node:crypto scryptSync
  */
 export function hashPin(pin, existingSalt = null) {
-  const salt = existingSalt || crypto.randomBytes(16).toString('hex');
-  const hash = crypto.scryptSync(String(pin), salt, 64).toString('hex');
+  const salt = existingSalt || crypto.randomBytes(PIN_SALT_BYTES).toString('hex');
+  const hash = crypto
+    .scryptSync(String(pin), salt, PIN_SCRYPT_KEYLEN)
+    .toString('hex');
   return { hash, salt };
 }
 
 export function verifyPin(pin, storedHash, storedSalt) {
   try {
     const { hash } = hashPin(pin, storedSalt);
-    const a = Buffer.from(hash, 'hex');
-    const b = Buffer.from(storedHash, 'hex');
-    if (a.length !== b.length) return false;
-    return crypto.timingSafeEqual(a, b);
+    return timingSafeEqualStrings(hash, storedHash, 'hex');
   } catch {
     return false;
   }
@@ -218,40 +244,40 @@ export function verifyPin(pin, storedHash, storedSalt) {
  * HMAC-signed stateless session token
  */
 export function signToken(user) {
+  const now = Date.now();
   const payload = {
     uid: user.id,
     callsign: user.callsign,
     avatarColor: user.avatarColor || user.avatar_color || '#E85D2A',
     isGuest: Boolean(user.isGuest || user.is_guest),
-    iat: Date.now(),
-    exp: Date.now() + 30 * 24 * 60 * 60 * 1000, // 30 days
+    iat: now,
+    exp: now + TOKEN_TTL_MS,
   };
   const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
-  const sig = crypto
-    .createHmac('sha256', SERVER_SECRET)
-    .update(encoded)
-    .digest('base64url');
+  const sig = hmacDigest(encoded, 'base64url');
   return `${encoded}.${sig}`;
 }
 
-export function verifyToken(token) {
+function verifyToken(token) {
   if (!token || typeof token !== 'string') return null;
   const parts = token.trim().split('.');
   if (parts.length !== 2) return null;
+
   const [encoded, sig] = parts;
-  const expectedSig = crypto
-    .createHmac('sha256', SERVER_SECRET)
-    .update(encoded)
-    .digest('base64url');
+  const expectedSig = hmacDigest(encoded, 'base64url');
+  if (!timingSafeEqualStrings(sig, expectedSig, 'utf8')) {
+    return null;
+  }
 
   try {
-    const a = Buffer.from(sig);
-    const b = Buffer.from(expectedSig);
-    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-      return null;
-    }
-    const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
-    if (!payload.uid || !payload.callsign || (payload.exp && Date.now() > payload.exp)) {
+    const payload = JSON.parse(
+      Buffer.from(encoded, 'base64url').toString('utf8')
+    );
+    if (
+      !payload.uid ||
+      !payload.callsign ||
+      (payload.exp && Date.now() > payload.exp)
+    ) {
       return null;
     }
     return payload;
@@ -280,7 +306,9 @@ export function extractAuthUser(req, body = null) {
  * Sanitizers
  */
 export function sanitizeCallsign(raw) {
-  if (typeof raw !== 'string') return { ok: false, error: 'Укажите позывной' };
+  if (typeof raw !== 'string') {
+    return { ok: false, error: 'Укажите позывной' };
+  }
   const cleaned = raw.trim().replace(/\s+/g, '_');
   if (cleaned.length < 2 || cleaned.length > 20) {
     return {
@@ -325,6 +353,7 @@ export function sanitizeAvatarColor(raw) {
  */
 const buckets = new Map();
 const lastChatByUser = new Map();
+let lastChatPruneAt = 0;
 
 const BUCKET_CONFIGS = {
   api: { capacity: 120, refillPerSec: 25, minIntervalMs: 0 },
@@ -334,6 +363,14 @@ const BUCKET_CONFIGS = {
   moment: { capacity: 15, refillPerSec: 2.0, minIntervalMs: 0 },
   reaction: { capacity: 30, refillPerSec: 5.0, minIntervalMs: 0 },
 };
+
+function pruneExpiredEntries(map, now, ttlMs, getTimestamp) {
+  for (const [key, entry] of map.entries()) {
+    if (now - getTimestamp(entry) >= ttlMs) {
+      map.delete(key);
+    }
+  }
+}
 
 export function checkRateLimit(type, key) {
   const cfg = BUCKET_CONFIGS[type] || BUCKET_CONFIGS.api;
@@ -371,11 +408,8 @@ export function checkRateLimit(type, key) {
   state.tokens -= 1;
   state.lastAction = now;
 
-  // Periodic map pruning
-  if (buckets.size > 10000) {
-    for (const [k, v] of buckets.entries()) {
-      if (now - v.lastRefill > 600_000) buckets.delete(k);
-    }
+  if (buckets.size > RATE_LIMIT_PRUNE_THRESHOLD) {
+    pruneExpiredEntries(buckets, now, RATE_LIMIT_TTL_MS, (entry) => entry.lastRefill);
   }
 
   return { allowed: true };
@@ -383,10 +417,23 @@ export function checkRateLimit(type, key) {
 
 export function checkChatSpam(userKey, text) {
   const normalized = text.toLowerCase().trim();
-  const prev = lastChatByUser.get(userKey);
   const now = Date.now();
+  const prev = lastChatByUser.get(userKey);
 
-  if (prev && prev.text === normalized && now - prev.time < 60_000) {
+  if (
+    lastChatByUser.size > CHAT_SPAM_PRUNE_THRESHOLD ||
+    now - lastChatPruneAt >= CHAT_SPAM_PRUNE_INTERVAL_MS
+  ) {
+    lastChatPruneAt = now;
+    pruneExpiredEntries(
+      lastChatByUser,
+      now,
+      CHAT_SPAM_WINDOW_MS,
+      (entry) => entry.time
+    );
+  }
+
+  if (prev && prev.text === normalized && now - prev.time < CHAT_SPAM_WINDOW_MS) {
     return {
       allowed: false,
       error: 'Не дублируйте одно и то же сообщение подряд.',
@@ -397,23 +444,45 @@ export function checkChatSpam(userKey, text) {
   return { allowed: true };
 }
 
+function normalizeIp(ip) {
+  return String(ip || '').trim().replace(/^::ffff:/, '');
+}
+
 // Only explicitly configured proxies can supply forwarded addresses.
 export function getClientIp(req) {
-  const normalize = (ip) => String(ip || '').replace(/^::ffff:/, '');
-  const peer = normalize(req.socket?.remoteAddress);
-  const trusted = new Set((process.env.RADIOTV_TRUSTED_PROXIES || '').split(',').map(normalize));
-  if (!trusted.has(peer)) return peer || 'unknown';
+  const peer = normalizeIp(req.socket?.remoteAddress);
+  const trusted = new Set(
+    (process.env.RADIOTV_TRUSTED_PROXIES || '')
+      .split(',')
+      .map(normalizeIp)
+      .filter(Boolean)
+  );
+  if (!peer || !trusted.has(peer)) {
+    return peer || 'unknown';
+  }
+
   const forwarded = req.headers['x-forwarded-for'];
   if (typeof forwarded !== 'string') return peer;
-  const hops = forwarded.split(',').map((ip) => normalize(ip.trim()));
-  if (hops.length > 10 || hops.some((ip) => !isIP(ip))) return peer;
+
+  const hops = forwarded.split(',').map((ip) => normalizeIp(ip));
+  if (hops.length > MAX_XFF_HOPS || hops.some((ip) => !isIP(ip))) {
+    return peer;
+  }
+
   for (let i = hops.length - 1; i >= 0; i--) {
-    if (!trusted.has(hops[i])) return hops[i];
+    if (!trusted.has(hops[i])) {
+      return hops[i];
+    }
   }
   return peer;
 }
 
 export function isStrongPin(pin) {
-  return /^[0-9]{6,16}$/.test(pin) && !/^(.)\1+$/.test(pin) &&
-    !'01234567890123456789'.includes(pin) && !'98765432109876543210'.includes(pin);
+  return (
+    typeof pin === 'string' &&
+    /^[0-9]{6,16}$/.test(pin) &&
+    !/^(.)\1+$/.test(pin) &&
+    !'01234567890123456789'.includes(pin) &&
+    !'98765432109876543210'.includes(pin)
+  );
 }
