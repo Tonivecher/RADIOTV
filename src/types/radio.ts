@@ -6,30 +6,6 @@ export type ReactionKind =
   | 'acid'
   | 'heart';
 
-export type ThemeId =
-  | 'dusk'
-  | 'graphite'
-  | 'midnight'
-  | 'cloud';
-
-export interface ThemeMeta {
-  id: ThemeId;
-  code: string;
-  name: string;
-  shortName: string;
-  subtitle: string;
-  mode: 'dark' | 'light';
-  accentHex: string;
-  bgHex: string;
-}
-
-export const RADIO_THEMES: ThemeMeta[] = [
-  { id: 'dusk', code: 'Вечер', name: 'Вечер', shortName: 'Вечер', subtitle: 'Тёплый свет', mode: 'dark', accentHex: '#e7bb94', bgHex: '#1b1a17' },
-  { id: 'graphite', code: 'Графит', name: 'Графит', shortName: 'Графит', subtitle: 'Спокойные серые тона', mode: 'dark', accentHex: '#bac8ba', bgHex: '#202321' },
-  { id: 'midnight', code: 'Ночь', name: 'Ночь', shortName: 'Ночь', subtitle: 'Глубокие синие тона', mode: 'dark', accentHex: '#b4c3df', bgHex: '#151c2b' },
-  { id: 'cloud', code: 'Облако', name: 'Облако', shortName: 'Облако', subtitle: 'Светлая тема', mode: 'light', accentHex: '#876444', bgHex: '#efede6' },
-];
-
 export const REACTION_CATALOG: Array<{
   kind: ReactionKind;
   label: string;
@@ -78,7 +54,7 @@ export interface ChatMessageItem {
   createdAt: string | number;
 }
 
-export interface BroadcastSlot {
+interface BroadcastSlot {
   setId: string | number;
   code: string;
   frequency: string;

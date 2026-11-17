@@ -37,11 +37,32 @@ export const AuthShieldModal: React.FC<AuthShieldModalProps> = ({
   const [loading, setLoading] = useState<boolean>(false);
 
   const dialogRef = useRef<HTMLDivElement>(null);
+  const focusTimerRef = useRef<number | null>(null);
+
   useEffect(() => {
-    if (!isOpen) return;
+    return () => {
+      if (focusTimerRef.current !== null) {
+        window.clearTimeout(focusTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    if (focusTimerRef.current !== null) {
+      window.clearTimeout(focusTimerRef.current);
+      focusTimerRef.current = null;
+    }
     const previous = document.activeElement as HTMLElement | null;
     dialogRef.current?.querySelector<HTMLElement>('button')?.focus();
-    return () => { window.setTimeout(() => previous?.focus({ preventScroll: true }), 0); };
+    return () => {
+      focusTimerRef.current = window.setTimeout(() => {
+        focusTimerRef.current = null;
+        previous?.focus({ preventScroll: true });
+      }, 0);
+    };
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -107,12 +128,28 @@ export const AuthShieldModal: React.FC<AuthShieldModalProps> = ({
       ref={dialogRef}
       className="auth-modal-backdrop"
       onKeyDown={(e) => {
-        if (e.key === 'Escape') { e.preventDefault(); onClose(); return; }
-        if (e.key !== 'Tab') return;
-        const controls = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not([aria-hidden="true"]):not(:disabled)'));
-        const first = controls[0], last = controls[controls.length - 1];
-        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
-        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          onClose();
+          return;
+        }
+        if (e.key !== 'Tab') {
+          return;
+        }
+        const controls = Array.from(
+          e.currentTarget.querySelectorAll<HTMLElement>(
+            'button:not(:disabled), input:not([aria-hidden="true"]):not(:disabled)'
+          )
+        );
+        const first = controls[0];
+        const last = controls[controls.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last?.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first?.focus();
+        }
       }}
       role="dialog"
       aria-modal="true"

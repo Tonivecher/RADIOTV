@@ -84,7 +84,13 @@ export const DspEqualizerConsole: React.FC<DspEqualizerConsoleProps> = ({
   const [newPresetName, setNewPresetName] = useState<string>('');
   const [showSaveInput, setShowSaveInput] = useState<boolean>(false);
 
-  const allPresets = [...BUILTIN_PRESETS.map((preset) => ({ ...preset, ...(PRESET_COPY[preset.id] || {}) })), ...customPresets];
+  const allPresets = [
+    ...BUILTIN_PRESETS.map((preset) => ({
+      ...preset,
+      ...(PRESET_COPY[preset.id] || {}),
+    })),
+    ...customPresets,
+  ];
   const currentPreset = allPresets.find((p) => p.id === activePresetId);
 
   useEffect(() => {
@@ -207,20 +213,46 @@ export const DspEqualizerConsole: React.FC<DspEqualizerConsoleProps> = ({
       ctx.globalAlpha = 1;
     };
 
-    const wake = () => { if (!rafId && visible && intersecting) rafId = window.requestAnimationFrame(renderLoop); };
+    const wake = () => {
+      if (!rafId && visible && intersecting) {
+        rafId = window.requestAnimationFrame(renderLoop);
+      }
+    };
     wakeRef.current = wake;
-    const visibility = () => { visible = !document.hidden; if (visible) wake(); };
+    const visibility = () => {
+      visible = !document.hidden;
+      if (visible) {
+        wake();
+      }
+    };
     document.addEventListener('visibilitychange', visibility);
-    const observer = new IntersectionObserver(([entry]) => { intersecting = entry.isIntersecting; if (intersecting) wake(); });
-    if (canvasRef.current) observer.observe(canvasRef.current);
+    const observer = new IntersectionObserver(([entry]) => {
+      intersecting = entry.isIntersecting;
+      if (intersecting) {
+        wake();
+      }
+    });
+    if (canvasRef.current) {
+      observer.observe(canvasRef.current);
+    }
     const themeObserver = new MutationObserver(wake);
-    themeObserver.observe(document.documentElement, { attributes:true, attributeFilter:['data-theme'] });
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    });
     wake();
-    return () => { window.cancelAnimationFrame(rafId); observer.disconnect(); themeObserver.disconnect(); document.removeEventListener('visibilitychange', visibility); wakeRef.current = () => {}; };
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      observer.disconnect();
+      themeObserver.disconnect();
+      document.removeEventListener('visibilitychange', visibility);
+      wakeRef.current = () => {};
+    };
   }, []);
 
-
-  useEffect(() => { wakeRef.current(); }, [bands, isPlaying, canvasMetrics]);
+  useEffect(() => {
+    wakeRef.current();
+  }, [bands, isPlaying, canvasMetrics]);
 
   const handleSavePreset = (e: React.FormEvent) => {
     e.preventDefault();

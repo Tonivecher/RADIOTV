@@ -13,7 +13,7 @@ import { radioDsp } from './dspEngine';
  *   above 3.5 s .................. micro-faded seek (LIVE RESYNC)
  */
 
-export type SyncState = 'idle' | 'in-sync' | 'compensating' | 'resync';
+type SyncState = 'idle' | 'in-sync' | 'compensating' | 'resync';
 
 export interface SyncSnapshot {
   state: SyncState;
@@ -22,7 +22,7 @@ export interface SyncSnapshot {
   playbackRate: number;
 }
 
-export const PHASE_LOCK = {
+const PHASE_LOCK = {
   /** Inside this window the lock is considered converged. */
   DEADBAND_SEC: 0.08,
   /** Drift needed to start compensating (hysteresis against the dead band). */
@@ -43,14 +43,14 @@ export const PHASE_LOCK = {
   RESYNC_HOLD_MS: 1200,
 } as const;
 
-export interface PhasePlan {
+interface PhasePlan {
   action: 'rate' | 'seek';
   targetRate: number;
   compensating: boolean;
 }
 
 /** Pure decision function (kept separate so it is trivial to unit test). */
-export function planPhaseCorrection(driftSec: number, wasCompensating: boolean): PhasePlan {
+function planPhaseCorrection(driftSec: number, wasCompensating: boolean): PhasePlan {
   const abs = Math.abs(driftSec);
   if (abs > PHASE_LOCK.HARD_SEC) {
     return { action: 'seek', targetRate: 1, compensating: true };

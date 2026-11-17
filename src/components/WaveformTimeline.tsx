@@ -335,6 +335,15 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
   const particlesRef = useRef<Particle[]>([]);
   const knownMomentIdsRef = useRef<Set<number> | null>(null);
   const wakeRef = useRef<() => void>(() => {});
+  const burstTimersRef = useRef<Set<number>>(new Set());
+
+  useEffect(() => {
+    const timers = burstTimersRef.current;
+    return () => {
+      timers.forEach((timerId) => window.clearTimeout(timerId));
+      timers.clear();
+    };
+  }, []);
 
   const spawnParticles = (xPercent: number, kind: ReactionKind) => {
     const { metrics } = liveRef.current;
@@ -367,9 +376,11 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
     const id = Date.now() + Math.random();
     setBursts((prev) => [...prev.slice(-10), { id, xPercent, kind }]);
     spawnParticles(xPercent, kind);
-    window.setTimeout(() => {
+    const timerId = window.setTimeout(() => {
+      burstTimersRef.current.delete(timerId);
       setBursts((prev) => prev.filter((b) => b.id !== id));
     }, 1350);
+    burstTimersRef.current.add(timerId);
   };
 
   // Reactions arriving from other listeners also pop a particle burst.
@@ -457,10 +468,22 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
       rafId = window.requestAnimationFrame(frame);
     };
     wakeRef.current = wake;
-    const syncVisibility = () => { visible = !document.hidden; if (visible) wake(); };
+    const syncVisibility = () => {
+      visible = !document.hidden;
+      if (visible) {
+        wake();
+      }
+    };
     document.addEventListener('visibilitychange', syncVisibility);
-    const visibilityObserver = new IntersectionObserver(([entry]) => { intersecting = entry.isIntersecting; if (intersecting) wake(); });
-    if (canvasRef.current) visibilityObserver.observe(canvasRef.current);
+    const visibilityObserver = new IntersectionObserver(([entry]) => {
+      intersecting = entry.isIntersecting;
+      if (intersecting) {
+        wake();
+      }
+    });
+    if (canvasRef.current) {
+      visibilityObserver.observe(canvasRef.current);
+    }
 
     // Theme switches change the --wave-* variables on the root element.
     const themeObserver = new MutationObserver(() => {
@@ -501,7 +524,9 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
       setSelectedKind(kind);
     } catch (error) {
       setErrorText(error instanceof Error ? error.message : 'Не удалось сохранить отметку.');
-    } finally { setIsSubmitting(false); }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleMomentSubmit = async (e: React.FormEvent) => {
@@ -648,13 +673,27 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
           </div>
 
           {/* Live Playhead Optical Beam */}
-          {durationSec > 0 && <div
-            className="waveform-playhead"
-            style={{ left: `clamp(12px, ${progressRatio * 100}%, calc(100% - 12px))` }}
-            aria-hidden="true"
-          >
-            <span className="waveform-playhead__badge" style={{ transform: progressRatio < 0.12 ? 'none' : progressRatio > 0.88 ? 'translateX(-100%)' : 'translateX(-50%)' }}>Сейчас {formatTimecode(displayPosition)}</span>
-          </div>}
+          {durationSec > 0 && (
+            <div
+              className="waveform-playhead"
+              style={{ left: `clamp(12px, ${progressRatio * 100}%, calc(100% - 12px))` }}
+              aria-hidden="true"
+            >
+              <span
+                className="waveform-playhead__badge"
+                style={{
+                  transform:
+                    progressRatio < 0.12
+                      ? 'none'
+                      : progressRatio > 0.88
+                        ? 'translateX(-100%)'
+                        : 'translateX(-50%)',
+                }}
+              >
+                Сейчас {formatTimecode(displayPosition)}
+              </span>
+            </div>
+          )}
 
           {/* Hover Reticle */}
           {hoverRatio !== null && (
@@ -702,7 +741,16 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
               <button
                 type="button"
                 className="waveform-whisper__upvote"
-                onClick={() => { setErrorText(''); void onLikeMoment(activeMoment.id).catch((error) => setErrorText(error.message)); }}
+                onClick={() => {
+                  setErrorText('');
+                  void onLikeMoment(activeMoment.id).catch((error) => {
+                    setErrorText(
+                      error instanceof Error
+                        ? error.message
+                        : 'Не удалось сохранить отметку.'
+                    );
+                  });
+                }}
               >
                 <span>Нравится</span>
                 <strong>+{activeMoment.likesCount}</strong>
@@ -745,7 +793,8 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
             <input
               type="text"
               className="waveform-stamp-form__input"
-              aria-label="Комментарий к моменту" placeholder="Комментарий к моменту…"
+              aria-label="Комментарий к моменту"
+              placeholder="Комментарий к моменту…"
               maxLength={140}
               value={commentText}
               onChange={(e) => setCommentText(e.target.value)}

@@ -60,8 +60,13 @@ export const LiveEtherChat: React.FC<LiveEtherChatProps> = ({
 
   const react = async (id: number, kind: ReactionKind) => {
     setErrorText('');
-    try { await onReactToMessage(id, kind); }
-    catch (error) { setErrorText(error instanceof Error ? error.message : 'Не удалось сохранить отклик.'); }
+    try {
+      await onReactToMessage(id, kind);
+    } catch (error) {
+      setErrorText(
+        error instanceof Error ? error.message : 'Не удалось сохранить отклик.'
+      );
+    }
   };
 
   return (
@@ -106,7 +111,11 @@ export const LiveEtherChat: React.FC<LiveEtherChatProps> = ({
 
         {/* Open Airy Messages Stream (hairline separators, no nested boxes) */}
         <div ref={feedRef} className="chat-stream">
-          {visibleMessages.length === 0 && <p className="chat-empty">Пока тихо. Можно просто слушать или начать разговор.</p>}
+          {visibleMessages.length === 0 && (
+            <p className="chat-empty">
+              Пока тихо. Можно просто слушать или начать разговор.
+            </p>
+          )}
           {visibleMessages.map((msg) => {
             const reactionEntries = Object.entries(msg.reactions || {}).filter(
               ([, count]) => (count || 0) > 0
@@ -173,7 +182,11 @@ export const LiveEtherChat: React.FC<LiveEtherChatProps> = ({
           })}
         </div>
 
-        {errorText && <p role="alert" className="auth-error-box">{errorText}</p>}
+        {errorText && (
+          <p role="alert" className="auth-error-box">
+            {errorText}
+          </p>
+        )}
         {/* Message Composer */}
         <form className="chat-composer" onSubmit={handleSubmit}>
           <div className="chat-composer__status">
@@ -184,7 +197,8 @@ export const LiveEtherChat: React.FC<LiveEtherChatProps> = ({
             <input
               type="text"
               className="chat-composer__input"
-              aria-label="Сообщение в чат" placeholder="Написать в чат…"
+              aria-label="Сообщение в чат"
+              placeholder="Написать в чат…"
               maxLength={280}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}

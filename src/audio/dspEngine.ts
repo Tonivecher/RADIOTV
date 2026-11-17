@@ -1,11 +1,3 @@
-export interface EqBand {
-  freq: number;
-  label: string;
-  gain: number; // -2 to +2 dB
-  type: BiquadFilterType;
-  q: number;
-}
-
 export interface DspMacroState {
   subBass: number;      // 0..100
   warmthDrive: number;  // 0..100
@@ -26,7 +18,11 @@ export interface AudioPreset {
 export const EQ_GAIN_LIMIT_DB = 2;
 export const NEUTRAL_BANDS = Array<number>(10).fill(0);
 export const NEUTRAL_MACROS: DspMacroState = {
-  subBass: 0, warmthDrive: 0, airPresence: 0, compGlue: 0, masterGain: 85,
+  subBass: 0,
+  warmthDrive: 0,
+  airPresence: 0,
+  compGlue: 0,
+  masterGain: 85,
 };
 
 export const clampEqGain = (value: number): number =>
@@ -151,7 +147,7 @@ function waitForMediaEvent(
   });
 }
 
-export class RadioDspEngine {
+class RadioDspEngine {
   private ctx: AudioContext | null = null;
   private sourceNode: MediaElementAudioSourceNode | null = null;
   private eqNodes: BiquadFilterNode[] = [];
@@ -187,18 +183,9 @@ export class RadioDspEngine {
   private currentBands: number[] = [...NEUTRAL_BANDS];
   private currentMacros: DspMacroState = { ...NEUTRAL_MACROS };
 
-  public precompileWarmup(): boolean {
-    try {
-      buildWarmthCurve(38);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
   /**
    * Builds the DSP graph and attaches it to the <audio> element.
-   * Does NOT resume the context: call `resume()` / `unlock()` from a user gesture.
+   * Does NOT resume the context: call `resume()` from a user gesture.
    */
   public initAndAttach(audioEl: HTMLAudioElement): boolean {
     try {
@@ -477,24 +464,6 @@ export class RadioDspEngine {
     return Promise.race([wake, timeout]).then(() => (ctx.state as string) === 'running');
   }
 
-  /**
-   * First-gesture unlock: builds the graph if needed, wakes the context and plays one silent
-   * sample (the classic WebKit unlock trick). Safe to call repeatedly.
-   */
-  public unlock(audioEl: HTMLAudioElement): Promise<boolean> {
-    if (!this.initAndAttach(audioEl) || !this.ctx) return Promise.resolve(false);
-    try {
-      const buffer = this.ctx.createBuffer(1, 1, 22050);
-      const src = this.ctx.createBufferSource();
-      src.buffer = buffer;
-      src.connect(this.ctx.destination);
-      src.start(0);
-    } catch {
-      // unlock buffer is best-effort
-    }
-    return this.resume(false);
-  }
-
   /** Ramps the output bus to silence (default 15 ms) so a following `pause()` does not click. */
   public fadeOut(durationMs = 15): void {
     ++this.fadeRevision;
@@ -544,7 +513,10 @@ export class RadioDspEngine {
     try {
       await delay(Math.ceil(DUCK_DOWN_SEC * 1000) + 4);
       if (revision !== this.fadeRevision) return;
-      if (document.hidden) { doSeek(); return; }
+      if (document.hidden) {
+        doSeek();
+        return;
+      }
       const seeked = waitForMediaEvent(audio, 'seeked', 2500);
       doSeek();
       await seeked;
@@ -733,8 +705,12 @@ export class RadioDspEngine {
     }
 
     return {
-      bins: new Array(32).fill(0), waveform: new Array(64).fill(0),
-      rmsL: 0, rmsR: 0, dbL: -60, dbR: -60,
+      bins: new Array(32).fill(0),
+      waveform: new Array(64).fill(0),
+      rmsL: 0,
+      rmsR: 0,
+      dbL: -60,
+      dbR: -60,
     };
   }
 }

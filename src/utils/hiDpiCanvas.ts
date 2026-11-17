@@ -1,6 +1,6 @@
 import { RefObject, useEffect, useState } from 'react';
 
-export interface CanvasMetrics {
+interface CanvasMetrics {
   /** CSS pixel width of the canvas box. */
   width: number;
   /** CSS pixel height of the canvas box. */

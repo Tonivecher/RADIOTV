@@ -8,9 +8,23 @@ const NAME = 'ToniVecherRadio';
 export function StationWordmark() {
   const reduced = useReducedMotion();
   const { visible } = useSpatialMotion();
-  return <span className="island-brand__title station-wordmark" data-paused={!visible || reduced ? 'true' : undefined}>
-    <span className="visually-hidden">{NAME}</span>
-    {Array.from(NAME, (letter, index) => <span key={index} className="station-wordmark__letter" aria-hidden="true"
-      style={{ '--letter-delay': `${index * 32}ms` } as CSSProperties}>{letter}</span>)}
-  </span>;
+
+  return (
+    <span
+      className="island-brand__title station-wordmark"
+      data-paused={!visible || reduced ? 'true' : undefined}
+    >
+      <span className="visually-hidden">{NAME}</span>
+      {Array.from(NAME, (letter, index) => (
+        <span
+          key={index}
+          className="station-wordmark__letter"
+          aria-hidden="true"
+          style={{ '--letter-delay': `${index * 32}ms` } as CSSProperties}
+        >
+          {letter}
+        </span>
+      ))}
+    </span>
+  );
 }

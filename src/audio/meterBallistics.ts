@@ -7,16 +7,18 @@
  * - Peak marker: latches the highest value, holds it for a moment, then falls with the same decay.
  */
 
-export const METER_ATTACK_MS = 10;
-export const METER_DECAY_PER_FRAME = 0.85;
-export const METER_FRAME_MS = 1000 / 60;
-export const PEAK_HOLD_MS = 450;
+const METER_ATTACK_MS = 10;
+const METER_DECAY_PER_FRAME = 0.85;
+const METER_FRAME_MS = 1000 / 60;
+const PEAK_HOLD_MS = 450;
 /** Bottom of the meter scale in dBFS. */
 export const METER_FLOOR_DB = -42;
 
 /** Maps a linear amplitude (0..1) to a 0..1 meter position on a dB scale. */
 export function levelToUnit(linear: number): number {
-  if (!(linear > 0)) return 0;
+  if (!(linear > 0)) {
+    return 0;
+  }
   const db = 20 * Math.log10(linear);
   return Math.max(0, Math.min(1, (db - METER_FLOOR_DB) / -METER_FLOOR_DB));
 }
@@ -36,7 +38,9 @@ export class MeterBallistics {
     } else {
       this.level = Math.max(input, this.level * decay);
     }
-    if (this.level < 0.001) this.level = 0;
+    if (this.level < 0.001) {
+      this.level = 0;
+    }
 
     if (input >= this.peak) {
       this.peak = input;
@@ -44,16 +48,12 @@ export class MeterBallistics {
     } else if (nowMs > this.holdUntilMs) {
       this.peak = Math.max(this.level, this.peak * decay);
     }
-    if (this.peak < 0.001) this.peak = 0;
+    if (this.peak < 0.001) {
+      this.peak = 0;
+    }
   }
 
   public isAtRest(): boolean {
     return this.level === 0 && this.peak === 0;
-  }
-
-  public reset(): void {
-    this.level = 0;
-    this.peak = 0;
-    this.holdUntilMs = 0;
   }
 }
