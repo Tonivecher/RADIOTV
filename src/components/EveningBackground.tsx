@@ -1,6 +1,8 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, useReducedMotion } from 'framer-motion';
+import { resolveChannelAsciiProfile } from '../constants/ascii';
+import { AsciiDotsRenderer } from '../utils/asciiDotsRenderer';
 import { safeStorage } from '../utils/storage';
 import { useSpatialMotion } from './SpatialMotion';
 
@@ -8,24 +10,51 @@ export interface BackgroundHandle {
   prepare: () => void;
 }
 
+export interface BackgroundMediaInfo {
+  blobUrl: string;
+  sourceUrl: string;
+  posterUrl: string;
+}
+
 interface EveningBackgroundProps {
+  channelId: string;
+  portalActive?: boolean;
   onReady: () => void;
   onError: (message: string) => void;
   onNeedsGesture: () => void;
+  onMediaChange?: (media: BackgroundMediaInfo) => void;
   retry: number;
   showControls: boolean;
   controlsHost: HTMLElement | null;
 }
 
-/** Fetch the small loop completely; the first repeat never needs another network request. */
+const TARGET_FPS_MS = 1000 / 24;
+
+/** Fetch the small loop completely and render it through the live ASCII-dots pipeline. */
 export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundProps>(
   function EveningBackground(
-    { onReady, onError, onNeedsGesture, retry, showControls, controlsHost },
+    {
+      channelId,
+      portalActive = false,
+      onReady,
+      onError,
+      onNeedsGesture,
+      onMediaChange,
+      retry,
+      showControls,
+      controlsHost,
+    },
     ref
   ) {
     const videoRef = useRef<HTMLVideoElement>(null);
-    const callbacks = useRef({ onReady, onError, onNeedsGesture });
-    callbacks.current = { onReady, onError, onNeedsGesture };
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+    const stageRef = useRef<HTMLDivElement>(null);
+    const posterImgRef = useRef<HTMLImageElement | null>(null);
+    const rendererRef = useRef<AsciiDotsRenderer | null>(null);
+    const stageSizeRef = useRef({ width: 0, height: 0 });
+
+    const callbacks = useRef({ onReady, onError, onNeedsGesture, onMediaChange });
+    callbacks.current = { onReady, onError, onNeedsGesture, onMediaChange };
 
     const reducedMotion = useReducedMotion();
     const [source] = useState(() =>
@@ -42,6 +71,7 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
     const [localRetry, setLocalRetry] = useState(0);
     const [error, setError] = useState('');
     const [preparing, setPreparing] = useState(false);
+    const [posterLoadedTick, setPosterLoadedTick] = useState(0);
 
     const posterUrl = `/media/evening-poster.jpg?retry=${retry}-${localRetry}`;
     const localRetryRef = useRef(localRetry);
@@ -64,6 +94,14 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
       setBackgroundPaused(paused);
     }, [paused, setBackgroundPaused]);
 
+    useEffect(() => {
+      callbacks.current.onMediaChange?.({
+        blobUrl,
+        sourceUrl: source,
+        posterUrl,
+      });
+    }, [blobUrl, source, posterUrl]);
+
     const prepare = () => {
       const video = videoRef.current;
       if (!document.hidden && !paused && !reducedMotion && video?.src) {
@@ -72,6 +110,23 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
     };
 
     useImperativeHandle(ref, () => ({ prepare }));
+
+    // Keep poster image decoded so ASCII rendering has an immediate fallback on pause / reduced motion.
+    useEffect(() => {
+      let active = true;
+      const img = new Image();
+      img.decoding = 'async';
+      img.onload = () => {
+        if (!active) return;
+        posterImgRef.current = img;
+        setPosterLoadedTick((t) => t + 1);
+      };
+      img.src = posterUrl;
+      return () => {
+        active = false;
+        img.onload = null;
+      };
+    }, [posterUrl]);
 
     useEffect(() => {
       const controller = new AbortController();
@@ -105,6 +160,8 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
             img.src = posterUrl;
             await img.decode();
             if (active) {
+              posterImgRef.current = img;
+              setPosterLoadedTick((t) => t + 1);
               ready();
             }
           } else if (!cachedUrl.current) {
@@ -174,6 +231,8 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
         if (cachedUrl.current) {
           URL.revokeObjectURL(cachedUrl.current);
         }
+        rendererRef.current?.dispose();
+        rendererRef.current = null;
       };
     }, []);
 
@@ -195,7 +254,6 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
       };
 
       const loaded = () => {
-        // loadeddata guarantees a decoded current frame; rVFC verifies presentation where supported.
         if (paused) {
           confirm();
         } else if (video.requestVideoFrameCallback) {
@@ -241,6 +299,80 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
       };
     }, [blobUrl, reducedMotion, paused]);
 
+    // Track ambient container size and render live / static ASCII-dots frames.
+    useEffect(() => {
+      const stage = stageRef.current;
+      const canvas = canvasRef.current;
+      if (!stage || !canvas) return;
+
+      if (!rendererRef.current) {
+        rendererRef.current = new AsciiDotsRenderer();
+      }
+      const renderer = rendererRef.current;
+      const profile = resolveChannelAsciiProfile(channelId);
+
+      const measure = () => {
+        const rect = stage.getBoundingClientRect();
+        stageSizeRef.current = {
+          width: Math.max(1, Math.round(rect.width || window.innerWidth)),
+          height: Math.max(1, Math.round(rect.height || window.innerHeight)),
+        };
+      };
+      measure();
+
+      const drawOnce = (nowMs: number, animate: boolean) => {
+        const { width, height } = stageSizeRef.current;
+        const video = videoRef.current;
+        const hasVideoFrame =
+          !reducedMotion &&
+          video &&
+          video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+          video.videoWidth > 0;
+        const mediaSource = hasVideoFrame ? video : posterImgRef.current;
+
+        renderer.renderFrame(canvas, mediaSource, {
+          width,
+          height,
+          dpr: window.devicePixelRatio || 1,
+          overscanTopPx: 44,
+          timeSec: nowMs * 0.001,
+          profile,
+          animate,
+        });
+      };
+
+      const observer = new ResizeObserver(() => {
+        measure();
+        drawOnce(performance.now(), !paused && !reducedMotion && visible);
+      });
+      observer.observe(stage);
+
+      const shouldStream = !paused && !reducedMotion && visible && !portalActive;
+      drawOnce(performance.now(), shouldStream);
+
+      if (!shouldStream) {
+        return () => {
+          observer.disconnect();
+        };
+      }
+
+      let rafId = 0;
+      let lastDrawAt = 0;
+      const tick = (nowMs: number) => {
+        if (nowMs - lastDrawAt >= TARGET_FPS_MS) {
+          lastDrawAt = nowMs;
+          drawOnce(nowMs, true);
+        }
+        rafId = window.requestAnimationFrame(tick);
+      };
+      rafId = window.requestAnimationFrame(tick);
+
+      return () => {
+        observer.disconnect();
+        window.cancelAnimationFrame(rafId);
+      };
+    }, [channelId, paused, reducedMotion, visible, portalActive, blobUrl, posterLoadedTick]);
+
     const toggleVideo = () => {
       const next = !paused;
       safeStorage.setItem('radiotv_video_paused', next ? '1' : '0');
@@ -266,14 +398,14 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
               data-paused={backgroundPaused ? 'true' : undefined}
             >
               <div
+                ref={stageRef}
                 className="evening-background__ambient"
                 data-paused={backgroundPaused ? 'true' : undefined}
               >
-                {reducedMotion || (paused && !blobUrl) ? (
-                  <img src={posterUrl} alt="" />
-                ) : (
+                {!reducedMotion && (
                   <video
                     ref={videoRef}
+                    className="evening-background__source"
                     src={blobUrl || undefined}
                     poster={posterUrl}
                     muted
@@ -283,6 +415,7 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
                     onError={() => fail('Не удалось открыть видео. Попробуйте ещё раз.')}
                   />
                 )}
+                <canvas ref={canvasRef} className="evening-background__canvas" />
               </div>
             </div>
           </motion.div>

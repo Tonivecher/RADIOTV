@@ -88,47 +88,49 @@ export const HeroTransportStage: React.FC<HeroTransportStageProps> = ({
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.8, delay: 0.25 }}
       >
-        <div className="hero-editorial-grid__left">
-          <div className="hero-eyebrow-line">
-            <span className="pulse-beacon is-live">
-              <span className="pulse-beacon__core" />
-              <span className="pulse-beacon__ring" />
-            </span>
-            <span>{isStateLoaded ? 'Прямой эфир' : 'Подключаемся к эфиру'}</span>
-            <span className="hero-eyebrow-sep">/</span>
-            <span>deep-tech · tech · deep · downtempo</span>
+        <FloatPanel className="hero-title-region" depth={0.9}>
+          <div className="hero-editorial-grid__left">
+            <div className="hero-eyebrow-line">
+              <span className="pulse-beacon is-live">
+                <span className="pulse-beacon__core" />
+                <span className="pulse-beacon__ring" />
+              </span>
+              <span>{isStateLoaded ? 'Прямой эфир' : 'Подключаемся к эфиру'}</span>
+              <span className="hero-eyebrow-sep">/</span>
+              <span>deep-tech · tech · deep</span>
+            </div>
+            <h1
+              className="hero-display-title"
+              style={{
+                fontFamily: "'Plus Jakarta Sans', 'Inter', sans-serif",
+                fontWeight: 400,
+                letterSpacing: '-0.055em',
+              }}
+            >
+              ToniVecherRadio
+            </h1>
+            <p className="hero-lead-copy" style={{ fontFamily: "'Inter', sans-serif" }}>
+              Выбирайте канал и слушайте вместе.
+              Отмечайте любимые моменты прямо на волне.
+            </p>
+            {stateError && (
+              <p className="auth-error-box" role="alert">
+                {stateError}{' '}
+                <button type="button" onClick={onRetryState}>
+                  Повторить
+                </button>
+              </p>
+            )}
+            {audioError && (
+              <p className="auth-error-box" role="alert">
+                {audioError}{' '}
+                <button type="button" onClick={onRetryAudio}>
+                  Повторить
+                </button>
+              </p>
+            )}
           </div>
-          <h1
-            className="hero-display-title"
-            style={{
-              fontFamily: "'Plus Jakarta Sans', 'Inter', sans-serif",
-              fontWeight: 400,
-              letterSpacing: '-0.055em',
-            }}
-          >
-            ToniVecherRadio
-          </h1>
-          <p className="hero-lead-copy" style={{ fontFamily: "'Inter', sans-serif" }}>
-            Выбирайте канал и слушайте вместе.
-            Понравился момент — отметьте его на волне.
-          </p>
-          {stateError && (
-            <p className="auth-error-box" role="alert">
-              {stateError}{' '}
-              <button type="button" onClick={onRetryState}>
-                Повторить
-              </button>
-            </p>
-          )}
-          {audioError && (
-            <p className="auth-error-box" role="alert">
-              {audioError}{' '}
-              <button type="button" onClick={onRetryAudio}>
-                Повторить
-              </button>
-            </p>
-          )}
-        </div>
+        </FloatPanel>
 
         {/* Right: Magnetic Transport Cluster & Custom Glass Volume Ribbon */}
         <FloatPanel className="hero-control-region" depth={0.7}>

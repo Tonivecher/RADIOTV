@@ -355,10 +355,29 @@ const SENSOR_COPY: Record<SensorStatus, string> = {
 
 export function BackgroundMotionControl() {
   const { sensorStatus, sensorWanted, motionPaused, toggleSensor } = useSpatialMotion();
+  const [hintVisible, setHintVisible] = useState(false);
+  const hintTimerRef = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    return () => {
+      window.clearTimeout(hintTimerRef.current);
+    };
+  }, []);
+
+  const handleToggle = () => {
+    toggleSensor();
+    setHintVisible(true);
+    window.clearTimeout(hintTimerRef.current);
+    hintTimerRef.current = window.setTimeout(() => {
+      setHintVisible(false);
+    }, 3200);
+  };
+
   const status = motionPaused
     ? 'Движение фона приостановлено'
     : SENSOR_COPY[sensorStatus];
   const showStatus =
+    hintVisible &&
     !motionPaused &&
     ['gesture', 'requesting', 'waiting', 'denied', 'unavailable'].includes(sensorStatus);
 
@@ -367,7 +386,7 @@ export function BackgroundMotionControl() {
       <button
         type="button"
         className="background-toggle background-motion-toggle"
-        onClick={toggleSensor}
+        onClick={handleToggle}
         aria-pressed={sensorWanted}
         aria-label={sensorWanted ? 'Выключить наклон фона' : 'Включить наклон фона'}
         title={status}

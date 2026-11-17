@@ -4,8 +4,16 @@ import { AmbientHeader } from './components/AmbientHeader';
 import { AuthShieldModal } from './components/AuthShieldModal';
 import { BootPreloader } from './components/BootPreloader';
 import { ChannelLoungeSection } from './components/ChannelLoungeSection';
+import {
+  ChannelTransition,
+  ChannelTransitionPortal,
+} from './components/ChannelTransitionPortal';
 import { DspEqualizerConsole } from './components/DspEqualizerConsole';
-import { BackgroundHandle, EveningBackground } from './components/EveningBackground';
+import {
+  BackgroundHandle,
+  BackgroundMediaInfo,
+  EveningBackground,
+} from './components/EveningBackground';
 import { FloatingMiniDock } from './components/FloatingMiniDock';
 import { HeroTransportStage } from './components/HeroTransportStage';
 import { LiveBeaconIcon, RadioIcon } from './components/icons/RadioIcons';
@@ -17,6 +25,7 @@ import {
   SpatialMotionProvider,
 } from './components/SpatialMotion';
 import { StationWordmark } from './components/StationWordmark';
+import { resolveThemeForChannel } from './constants/ascii';
 import { CHANNEL_COPY, REACTION_TO_ICON } from './constants/radio';
 import { useAudioTransport } from './hooks/useAudioTransport';
 import { useDspController } from './hooks/useDspController';
@@ -28,17 +37,22 @@ import { describeSync } from './utils/radioState';
 import { safeStorage } from './utils/storage';
 
 export const App: React.FC = () => {
-  const theme = 'dusk';
   const reducedMotion = useReducedMotion();
 
   const [showBootloader, setShowBootloader] = useState(true);
   const [bootRevealed, setBootRevealed] = useState(false);
+  const [portalTransition, setPortalTransition] = useState<ChannelTransition | null>(null);
   const bootVisibleRef = useRef(true);
   const enteredRef = useRef(false);
   bootVisibleRef.current = showBootloader && !enteredRef.current;
 
   const contentRef = useRef<HTMLDivElement>(null);
   const backgroundRef = useRef<BackgroundHandle>(null);
+  const [bgMedia, setBgMedia] = useState<BackgroundMediaInfo>({
+    blobUrl: '',
+    sourceUrl: '/media/evening-desktop.mp4',
+    posterUrl: '/media/evening-poster.jpg',
+  });
   const [videoControlsHost, setVideoControlsHost] = useState<HTMLDivElement | null>(null);
   const [videoRetry, setVideoRetry] = useState(0);
   const [isVideoReady, setIsVideoReady] = useState(false);
@@ -71,16 +85,24 @@ export const App: React.FC = () => {
   });
   broadcastSyncedRef.current = transport.onBroadcastSynced;
 
+  const theme = resolveThemeForChannel(radioLive.channelId);
+
   // Every channel switch updates transport flags before React swaps <audio src>
   const selectChannel = useCallback(
     (next: string) => {
-      if (next === radioLive.channelIdRef.current) {
+      const previous = radioLive.channelIdRef.current;
+      if (next === previous) {
         return;
+      }
+      if (!showBootloader) {
+        setPortalTransition({ fromChannelId: previous, toChannelId: next });
+      } else {
+        setPortalTransition(null);
       }
       transport.prepareForChannelSwitch();
       radioLive.switchChannelState(next);
     },
-    [radioLive, transport]
+    [radioLive, showBootloader, transport]
   );
 
   useMediaSession({
@@ -279,9 +301,12 @@ export const App: React.FC = () => {
         <div className={`spatial-root theme-${theme}`}>
           <EveningBackground
             ref={backgroundRef}
+            channelId={radioLive.channelId}
+            portalActive={Boolean(portalTransition)}
             retry={videoRetry}
-            showControls={!showBootloader && !radioSession.authModalOpen}
+            showControls={!showBootloader && !radioSession.authModalOpen && !portalTransition}
             controlsHost={videoControlsHost}
+            onMediaChange={setBgMedia}
             onReady={() => {
               setIsVideoReady(true);
               setVideoError('');
@@ -323,8 +348,12 @@ export const App: React.FC = () => {
             ref={contentRef}
             className="radio-content"
             data-boot-hidden={showBootloader && !bootRevealed ? true : undefined}
-            inert={showBootloader || radioSession.authModalOpen}
-            aria-hidden={showBootloader || radioSession.authModalOpen ? true : undefined}
+            inert={showBootloader || radioSession.authModalOpen || Boolean(portalTransition)}
+            aria-hidden={
+              showBootloader || radioSession.authModalOpen || Boolean(portalTransition)
+                ? true
+                : undefined
+            }
           >
             {/* Floating Dynamic Glass Island Navigation Bar */}
             <AmbientHeader>
@@ -487,6 +516,20 @@ export const App: React.FC = () => {
             currentSession={radioSession.session}
             onClose={() => radioSession.setAuthModalOpen(false)}
             onAuthenticated={radioSession.handleAuthenticated}
+          />
+
+          <ChannelTransitionPortal
+            transition={portalTransition}
+            videoSrc={bgMedia.blobUrl || bgMedia.sourceUrl}
+            posterUrl={bgMedia.posterUrl}
+            onComplete={() => {
+              setPortalTransition(null);
+              requestAnimationFrame(() =>
+                contentRef.current
+                  ?.querySelector<HTMLButtonElement>('.magnetic-cta--hero')
+                  ?.focus({ preventScroll: true })
+              );
+            }}
           />
         </div>
       </SpatialMotionProvider>
