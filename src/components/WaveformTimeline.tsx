@@ -1,5 +1,5 @@
 import { FloatPanel } from './SpatialMotion';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { radioDsp } from '../audio/dspEngine';
 import { MeterBallistics, levelToUnit } from '../audio/meterBallistics';
 import { REACTION_CATALOG, ReactionKind, WaveformMoment } from '../types/radio';
@@ -345,7 +345,7 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
     };
   }, []);
 
-  const spawnParticles = (xPercent: number, kind: ReactionKind) => {
+  const spawnParticles = useCallback((xPercent: number, kind: ReactionKind) => {
     const { metrics } = liveRef.current;
     if (metrics.width === 0) return;
     const innerH = metrics.height - PAD_TOP - PAD_BOTTOM;
@@ -370,7 +370,7 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
       particlesRef.current.splice(0, particlesRef.current.length - 160);
     }
     wakeRef.current();
-  };
+  }, []);
 
   const triggerBurst = (xPercent: number, kind: ReactionKind) => {
     const id = Date.now() + Math.random();
@@ -397,8 +397,7 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
         spawnParticles(pct, m.reactionType);
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [moments, safeDuration]);
+  }, [moments, safeDuration, spawnParticles]);
 
   // 60 FPS canvas renderer. The loop sleeps when nothing moves (paused, meters at rest, no
   // particles) and is woken by prop changes, so idle timelines cost zero frames.
@@ -551,6 +550,7 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
   const handlePointerMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!trackRef.current) return;
     const rect = trackRef.current.getBoundingClientRect();
+    if (!(rect.width > 0)) return;
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     setHoverRatio(ratio);
   };
@@ -558,6 +558,7 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
   const handleTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!trackRef.current) return;
     const rect = trackRef.current.getBoundingClientRect();
+    if (!(rect.width > 0)) return;
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     const clickedSec = Math.floor(ratio * safeDuration);
     setPinnedSec(clickedSec);

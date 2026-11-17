@@ -70,7 +70,7 @@ export function useRadioSession() {
           nonce: solved.nonce,
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.session?.token) {
         throw new Error(data.error || 'Не удалось войти.');
       }
@@ -104,7 +104,7 @@ export function useRadioSession() {
           },
           body: JSON.stringify(body),
         });
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         if (res.status === 401) {
           clearSession();
         }

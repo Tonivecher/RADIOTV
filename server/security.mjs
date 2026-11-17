@@ -216,6 +216,9 @@ export function verifyChallenge(challengeId, nonce) {
     activeChallenges.delete(challengeId);
   }
   usedChallenges.set(challengeId, expiresAt);
+  if (usedChallenges.size > MAX_USED_CHALLENGES) {
+    cleanupChallenges(Date.now());
+  }
 
   return { ok: true, hash };
 }

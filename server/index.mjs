@@ -181,6 +181,12 @@ function sendJson(res, statusCode, data) {
   res.end(body);
 }
 
+function createBodyError(statusCode, message) {
+  const err = new Error(message);
+  err.statusCode = statusCode;
+  return err;
+}
+
 function readJsonBody(req, maxBytes = MAX_JSON_BODY_BYTES) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -198,7 +204,7 @@ function readJsonBody(req, maxBytes = MAX_JSON_BODY_BYTES) {
       bytes += chunk.length;
       if (bytes > maxBytes) {
         req.destroy();
-        fail(new Error('Payload too large'));
+        fail(createBodyError(413, 'Слишком большой размер запроса'));
         return;
       }
       chunks.push(chunk);
@@ -212,7 +218,7 @@ function readJsonBody(req, maxBytes = MAX_JSON_BODY_BYTES) {
       try {
         resolve(JSON.parse(body));
       } catch {
-        reject(new Error('Invalid JSON body'));
+        reject(createBodyError(400, 'Некорректный формат JSON'));
       }
     });
 
@@ -685,14 +691,18 @@ function handleRadioEvents(req, res, urlObj, ip) {
   broadcastListenersUpdate(client.channelId);
 
   let closed = false;
-  req.on('close', () => {
+  const cleanup = () => {
     if (closed) return;
     closed = true;
     sseClients.delete(client);
     if (!isShuttingDown) {
       broadcastListenersUpdate(client.channelId);
     }
-  });
+  };
+
+  req.on('close', cleanup);
+  res.on('close', cleanup);
+  res.on('error', cleanup);
 }
 
 async function handleRadioStreamByChannel(req, res, urlObj, channelMatch) {
@@ -787,6 +797,9 @@ async function handleCreateMoment(req, res, ip) {
 
 async function handleLikeMoment(req, res, momentMatch) {
   const momentId = Number(momentMatch[1]);
+  if (!Number.isSafeInteger(momentId)) {
+    return sendJson(res, 404, { ok: false, error: 'Момент не найден' });
+  }
   const body = await readJsonBody(req);
   const authUser = extractAuthUser(req, body);
   if (!authUser) {
@@ -873,6 +886,9 @@ async function handleCreateChatMessage(req, res) {
 
 async function handleReactToChatMessage(req, res, chatMatch) {
   const messageId = Number(chatMatch[1]);
+  if (!Number.isSafeInteger(messageId)) {
+    return sendJson(res, 404, { ok: false, error: 'Сообщение не найдено' });
+  }
   const body = await readJsonBody(req);
   const authUser = extractAuthUser(req, body);
   if (!authUser) {
@@ -1003,12 +1019,17 @@ async function dispatchRequest(req, res) {
 const server = http.createServer(async (req, res) => {
   try {
     await dispatchRequest(req, res);
-  } catch {
+  } catch (err) {
     if (!res.headersSent) {
-      sendJson(res, 500, {
-        ok: false,
-        error: 'Не удалось выполнить действие. Попробуйте ещё раз.',
-      });
+      const statusCode =
+        err && Number.isInteger(err.statusCode) && err.statusCode >= 400 && err.statusCode < 500
+          ? err.statusCode
+          : 500;
+      const message =
+        statusCode < 500 && err.message
+          ? err.message
+          : 'Не удалось выполнить действие. Попробуйте ещё раз.';
+      sendJson(res, statusCode, { ok: false, error: message });
     } else if (!res.writableEnded) {
       res.end();
     }

@@ -103,6 +103,7 @@ export const AuthShieldModal: React.FC<AuthShieldModalProps> = ({
       onAuthenticated(loginData.session);
       onClose();
     } catch {
+      setStatusText('');
       setErrorText('Не удалось войти. Проверьте соединение и попробуйте ещё раз.');
     } finally {
       setLoading(false);

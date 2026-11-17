@@ -276,6 +276,7 @@ export const DspEqualizerConsole: React.FC<DspEqualizerConsoleProps> = ({
     idx: number
   ) => {
     const rect = el.getBoundingClientRect();
+    if (!(rect.height > 0)) return;
     const ratio = 1 - Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
     const rawDb = ratio * EQ_GAIN_LIMIT_DB * 2 - EQ_GAIN_LIMIT_DB;
     const snappedDb = clampEqGain(Math.round(rawDb * 10) / 10);
@@ -289,6 +290,7 @@ export const DspEqualizerConsole: React.FC<DspEqualizerConsoleProps> = ({
     key: keyof DspMacroState
   ) => {
     const rect = el.getBoundingClientRect();
+    if (!(rect.width > 0)) return;
     const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
     onChangeMacro({ [key]: Math.round(ratio * 100) });
   };

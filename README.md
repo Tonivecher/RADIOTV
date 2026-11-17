@@ -6,7 +6,7 @@
 
 Приложение разделено на SPA-клиент и серверную часть без внешних npm-зависимостей в рантайме бэкенда.
 
-- **Фронтенд (`src/`)**: интерфейс на React 19 и TypeScript. Клиент получает текущую позицию эфира от сервера, удерживает фазовую синхронизацию аудиопотока (`src/audio/liveSync.ts`), обрабатывает звук через 10-полосный эквалайзер и 5 макро-регуляторов на Web Audio API (`src/audio/dspEngine.ts`), рисует волну с тепловой картой реакций (`src/components/WaveformTimeline.tsx`) и принимает события в реальном времени через `EventSource`.
+- **Фронтенд (`src/`)**: интерфейс на React 19 и TypeScript. Клиент получает текущую позицию эфира от сервера, удерживает фазовую синхронизацию аудиопотока (`src/audio/liveSync.ts`), обрабатывает звук через 10-полосный эквалайзер и 5 макро-регуляторов на Web Audio API (`src/audio/dspEngine.ts`), рисует волну с тепловой картой реакций (`src/components/WaveformTimeline.tsx`) и принимает события в реальном времени через `EventSource` (`src/hooks/useLiveRadioState.ts`). Логика сессии, транспорта, DSP и Media Session вынесена в хуки `src/hooks/`.
 - **Бэкенд (`server/`)**: HTTP-сервер на `node:http` и встроенном `node:sqlite`. При старте сканирует каталоги с аудиофайлами (`.m4a`, `.mp3`, `.flac`, `.wav`, `.aiff`, `.ogg` размером от 5 МБ), определяет длительность через `ffprobe`, пересобирает поток без исходных метаданных в кеш через `ffmpeg` (`server/media.mjs`) и раздаёт аудио с поддержкой HTTP `206 Partial Content`. В фоне извлекает пики волны (`server/waveform.mjs`), хранит отметки, лайки, чат и пользователей (вход по PoW-задаче и PIN-коду, либо гостевая сессия) в SQLite и рассылает обновления по SSE (`/api/radio/events`). При наличии собранного `dist/` отдаёт статику вместе с `public/`.
 
 ## Стек
@@ -20,10 +20,10 @@
 | Путь | Назначение |
 | --- | --- |
 | `index.html` | HTML-оболочка и стартовый экран до загрузки бандла |
-| `src/` | Клиентский код: `audio/`, `components/`, `components/icons/`, `styles/`, `types/`, `utils/` |
+| `src/` | Клиентский код: `audio/`, `components/`, `components/icons/`, `constants/`, `hooks/`, `styles/`, `types/`, `utils/` |
 | `public/` | Статические файлы: фавиконки и манифест (`brand/`), шрифты (`fonts/`), фоновые медиа (`media/`) |
 | `server/` | HTTP/SSE-сервер (`index.mjs`), SQLite-слой (`db.mjs`), медиа-кеш (`media.mjs`), волна (`waveform.mjs`), безопасность (`security.mjs`), статика (`static.mjs`) |
-| `tests/` | Серверные регрессионные тесты (`regression.mjs`), браузерные сценарии (`browser.mjs`) и раннер (`run.mjs`) |
+| `tests/` | Утилиты (`helpers.mjs`), серверные регрессионные тесты (`regression.mjs`), браузерные сценарии (`browser.mjs`), smoke-проверка стенда (`public-smoke.mjs`) и раннер (`run.mjs`) |
 
 ## Локальный запуск
 
@@ -74,4 +74,5 @@ npm run dev
 
 - `npm run typecheck`: проверка типов TypeScript (`tsc --noEmit`).
 - `npm run build`: проверка типов и production-сборка клиента в `dist/`.
-- `npm test`: запускает `node tests/run.mjs`. Скрипт генерирует три тестовых WAV-файла через `ffmpeg`, поднимает изолированный сервер на случайном порту и по очереди запускает `node --test tests/regression.mjs` и `tests/browser.mjs` (для браузерного этапа требуется установленный Playwright в `evidence/browser-tools`).
+- `npm test`: запускает `node tests/run.mjs`. Скрипт проверяет актуальность сборки `dist/`, генерирует три тестовых WAV-файла через `ffmpeg` во временной директории ОС, поднимает изолированный сервер на случайном порту и запускает `node --test tests/regression.mjs`. Если установлен `playwright` или задан `PLAYWRIGHT_MODULE_PATH`, дополнительно запускает `tests/browser.mjs` (с флагом `--with-browser` отсутствие Playwright считается ошибкой). Временные данные удаляются по завершении; скриншоты и JSON-отчёты сохраняются только при заданной переменной `RADIOTV_EVIDENCE_DIR`.
+- `node tests/public-smoke.mjs`: smoke-проверка публичного стенда (по умолчанию `https://radio.tonivecher.online` или `RADIOTV_PUBLIC_URL`), требует `playwright` или `PLAYWRIGHT_MODULE_PATH`.

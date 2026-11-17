@@ -61,6 +61,7 @@ export const HeroTransportStage: React.FC<HeroTransportStageProps> = ({
 
   const updateVolumeFromClientX = (el: HTMLDivElement, clientX: number) => {
     const rect = el.getBoundingClientRect();
+    if (!(rect.width > 0)) return;
     const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
     onMasterGainChange(Math.round(ratio * 100));
   };

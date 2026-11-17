@@ -233,7 +233,7 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
       return () => {
         active = false;
         window.clearTimeout(timer);
-        if (frame) {
+        if (frame && video.cancelVideoFrameCallback) {
           video.cancelVideoFrameCallback(frame);
         }
         video.removeEventListener('loadeddata', loaded);
