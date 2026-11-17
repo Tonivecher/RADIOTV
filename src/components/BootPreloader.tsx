@@ -362,7 +362,7 @@ export function BootPreloader({
             ToniVecherRadio
           </h1>
           <p id="moscow-intro-description" className="moscow-intro__description">
-            Deep-tech, tech, deep и downtempo.
+            Deep-tech, tech и deep.
             <br />
             Выберите, как войти в эфир.
           </p>
@@ -504,7 +504,7 @@ export function BootPreloader({
 
         <footer className="moscow-intro__footer">
           <span>Независимое интернет-радио</span>
-          <span>Город. Вечер. Музыка.</span>
+          <span>Три канала без треклиста</span>
         </footer>
       </motion.div>
     </div>,

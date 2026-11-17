@@ -54,6 +54,6 @@ export const CHANNEL_COPY: Record<string, { name: string; description: string }>
   },
   'ch-afterglow': {
     name: 'DeepTech',
-    description: 'Медленнее, теплее. Музыка без спешки.',
+    description: 'Медленнее, теплее. Глубокий ночной ритм.',
   },
 };

@@ -87,7 +87,7 @@ export const ChannelLoungeSection: React.FC<ChannelLoungeSectionProps> = ({
             <BlindMaskIcon size={20} />
             <div>
               <strong>Слушайте без треклиста</strong>
-              <p>Названия треков скрыты. Понравился момент — оставьте отметку на волне.</p>
+              <p>Названия треков скрыты. Если понравился момент, оставьте отметку на волне.</p>
             </div>
           </div>
         </FloatPanel>

@@ -55,9 +55,9 @@ export const CHANNELS = {
   },
   'ch-afterglow': {
     id: 'ch-afterglow',
-    name: 'Downtempo',
-    title: 'Downtempo',
-    subtitle: 'Downtempo',
+    name: 'DeepTech',
+    title: 'DeepTech',
+    subtitle: 'DeepTech',
     frequency: '',
     mhz: '',
     accent: '#A78BFA',
