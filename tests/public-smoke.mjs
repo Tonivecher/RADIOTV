@@ -142,6 +142,17 @@ try {
     );
   });
 
+  const portal = page.locator('.channel-transition-portal');
+  if (await portal.isVisible()) {
+    await page.locator('.channel-portal__skip').click();
+    await portal.waitFor({ state: 'hidden', timeout: 15000 });
+  }
+  assert.equal(await page.evaluate(() => document.body.style.position), '');
+  assert.equal(
+    await page.evaluate(() => document.documentElement.getAttribute('data-theme')),
+    'deep'
+  );
+
   const desktopShot = getEvidenceFilePath('production-desktop.png');
   if (desktopShot) {
     await page.screenshot({ path: desktopShot, fullPage: true });

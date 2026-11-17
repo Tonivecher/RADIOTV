@@ -28,6 +28,136 @@ async function stableClick(locator) {
   await locator.click();
 }
 
+async function assertThemeVisualTokens(page, expectedTheme) {
+  const report = await page.evaluate((theme) => {
+    const actualTheme = document.documentElement.getAttribute('data-theme');
+    const textPrimaryRaw = getComputedStyle(document.documentElement)
+      .getPropertyValue('--text-primary')
+      .trim();
+
+    const probe = document.createElement('span');
+    probe.style.color = textPrimaryRaw;
+    probe.style.display = 'none';
+    document.body.appendChild(probe);
+    const textPrimaryRgb = textPrimaryRaw ? getComputedStyle(probe).color : '';
+    probe.remove();
+
+    const isPureWhite = (value) => {
+      const norm = String(value || '')
+        .toLowerCase()
+        .replace(/\s+/g, '');
+      return (
+        norm === '#fff' ||
+        norm === '#ffffff' ||
+        norm === 'white' ||
+        norm === 'rgb(255,255,255)' ||
+        norm === 'rgba(255,255,255,1)'
+      );
+    };
+
+    const parseAlpha = (bg) => {
+      const value = String(bg || '').trim().toLowerCase();
+      if (!value || value === 'transparent') return 0;
+      const commaMatch = value.match(
+        /^rgba?\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*(?:,\s*([\d.]+)\s*)?\)$/
+      );
+      if (commaMatch) {
+        return commaMatch[1] === undefined ? 1 : Number(commaMatch[1]);
+      }
+      const spaceMatch = value.match(
+        /^rgba?\(\s*[\d.]+\s+[\d.]+\s+[\d.]+\s*(?:\/\s*([\d.]+%?)\s*)?\)$/
+      );
+      if (spaceMatch) {
+        if (spaceMatch[1] === undefined) return 1;
+        return spaceMatch[1].endsWith('%')
+          ? parseFloat(spaceMatch[1]) / 100
+          : Number(spaceMatch[1]);
+      }
+      return 1;
+    };
+
+    const textSelectors = [
+      'h1',
+      'h2',
+      'h3',
+      '.hero-display-title',
+      '.magnetic-cta--hero',
+      '.island-channel-btn',
+      '.glass-pill-btn',
+      '.island-link',
+      '.channel-lens-row__name',
+    ];
+    const whiteElements = [];
+    for (const el of document.querySelectorAll(textSelectors.join(', '))) {
+      const style = getComputedStyle(el);
+      if (el.getClientRects().length === 0 || style.visibility === 'hidden') continue;
+      if (isPureWhite(style.color)) {
+        whiteElements.push({
+          tag: el.tagName.toLowerCase(),
+          className: el.className,
+          color: style.color,
+        });
+      }
+    }
+
+    const panelCounts = {
+      waveformShell: document.querySelectorAll('.waveform-shell').length,
+      glassDoubleShell: document.querySelectorAll('.glass-double-shell').length,
+      loungeTelemetryCol: document.querySelectorAll('.lounge-telemetry-col').length,
+    };
+
+    const opaquePanels = [];
+    for (const el of document.querySelectorAll(
+      '.waveform-shell, .glass-double-shell, .lounge-telemetry-col'
+    )) {
+      const bg = getComputedStyle(el).backgroundColor;
+      const alpha = parseAlpha(bg);
+      if (!Number.isFinite(alpha) || alpha > 0.06) {
+        opaquePanels.push({
+          className: el.className,
+          backgroundColor: bg,
+          alpha,
+        });
+      }
+    }
+
+    return {
+      actualTheme,
+      expectedTheme: theme,
+      textPrimaryRaw,
+      textPrimaryRgb,
+      textPrimaryPureWhite: isPureWhite(textPrimaryRaw) || isPureWhite(textPrimaryRgb),
+      whiteElements,
+      panelCounts,
+      opaquePanels,
+    };
+  }, expectedTheme);
+
+  assert.equal(report.actualTheme, expectedTheme);
+  assert(report.textPrimaryRaw.length > 0, `Missing --text-primary in theme ${expectedTheme}`);
+  assert.equal(
+    report.textPrimaryPureWhite,
+    false,
+    `--text-primary must not be pure white in theme ${expectedTheme}: ${report.textPrimaryRaw} (${report.textPrimaryRgb})`
+  );
+  assert.deepEqual(
+    report.whiteElements,
+    [],
+    `Found pure white text on headings/buttons in theme ${expectedTheme}: ${JSON.stringify(report.whiteElements)}`
+  );
+  assert(
+    report.panelCounts.waveformShell > 0 &&
+      report.panelCounts.glassDoubleShell > 0 &&
+      report.panelCounts.loungeTelemetryCol > 0,
+    `Expected panel shells to exist in theme ${expectedTheme}: ${JSON.stringify(report.panelCounts)}`
+  );
+  assert.deepEqual(
+    report.opaquePanels,
+    [],
+    `Panels exceed alpha <= 0.06 in theme ${expectedTheme}: ${JSON.stringify(report.opaquePanels)}`
+  );
+}
+
 async function enterEther(page) {
   await page.goto(base + '/');
   const enterQuietBtn = page.locator('.moscow-intro__secondary');
@@ -349,26 +479,140 @@ try {
     await pageB.unroute('**/api/radio/state?*');
   });
 
-  await check('audio plays and channel switching reloads a decodable stream', async () => {
+  await check('audio plays, channel portals unlock body, and all 3 themes meet visual token rules', async () => {
     await stableClick(pageA.locator('.magnetic-cta--hero'));
     await pageA.waitForFunction(() => {
       const audio = document.querySelector('audio');
       return Boolean(audio && !audio.paused && audio.currentTime > 0 && !audio.error);
     });
 
+    await assertThemeVisualTokens(pageA, 'dusk');
+
     const rows = pageA.locator('.channel-lens-row');
-    if ((await rows.count()) > 1) {
-      await stableClick(rows.nth(1));
-      await pageA.waitForFunction(() => {
-        const audio = document.querySelector('audio');
-        return Boolean(
-          audio &&
-            audio.currentSrc.includes('ch-deep') &&
-            audio.readyState >= 2 &&
-            !audio.error
-        );
+    assert((await rows.count()) >= 3, 'Expected at least 3 channel rows');
+
+    // Main -> Deep
+    await stableClick(rows.nth(1));
+    await pageA.locator('.channel-transition-portal').waitFor({ state: 'visible' });
+    assert.equal(await pageA.locator('#metro-hero-title').innerText(), 'DEEP');
+    await pageA.mouse.wheel(0, 260);
+    await pageA.waitForFunction(() => {
+      const audio = document.querySelector('audio');
+      return Boolean(
+        audio &&
+          audio.currentSrc.includes('ch-deep') &&
+          audio.readyState >= 2 &&
+          !audio.error
+      );
+    });
+    await pageA.locator('.channel-portal__skip').click();
+    await pageA.locator('.channel-transition-portal').waitFor({ state: 'hidden' });
+    assert.equal(
+      await pageA.evaluate(() => document.body.style.position),
+      ''
+    );
+    await assertThemeVisualTokens(pageA, 'deep');
+
+    // Deep -> DeepTech
+    await stableClick(rows.nth(2));
+    await pageA.locator('.channel-transition-portal').waitFor({ state: 'visible' });
+    assert.equal(await pageA.locator('#metro-hero-title').innerText(), 'DEEP TECH');
+    await pageA.waitForFunction(() => {
+      const audio = document.querySelector('audio');
+      return Boolean(
+        audio &&
+          audio.currentSrc.includes('ch-afterglow') &&
+          audio.readyState >= 2 &&
+          !audio.error
+      );
+    });
+    await pageA.locator('.channel-portal__skip').click();
+    await pageA.locator('.channel-transition-portal').waitFor({ state: 'hidden' });
+    assert.equal(
+      await pageA.evaluate(() => document.body.style.position),
+      ''
+    );
+    await assertThemeVisualTokens(pageA, 'afterglow');
+
+    // DeepTech -> Main via full scroll scrub
+    await stableClick(rows.nth(0));
+    await pageA.locator('.channel-transition-portal').waitFor({ state: 'visible' });
+    assert.equal(await pageA.locator('#metro-hero-title').innerText(), 'ОСНОВНОЙ');
+    await pageA.mouse.wheel(0, 1400);
+    await pageA.locator('.channel-transition-portal').waitFor({ state: 'hidden', timeout: 8000 });
+    assert.equal(
+      await pageA.evaluate(() => document.body.style.position),
+      ''
+    );
+    await assertThemeVisualTokens(pageA, 'dusk');
+  });
+
+  await check('floating island header is detached, leaves clear sky band across breakpoints, and collapses on mobile scroll', async () => {
+    for (const [w, h, minGap] of [
+      [1440, 960, 145],
+      [1100, 900, 130],
+      [760, 900, 108],
+      [390, 844, 102],
+    ]) {
+      await pageA.setViewportSize({ width: w, height: h });
+      await pageA.evaluate(() => {
+        if (document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
+        window.scrollTo({ top: 0, behavior: 'instant' });
       });
+      await pageA.waitForTimeout(120);
+      const geom = await pageA.evaluate(() => {
+        const header = document.querySelector('.island-header-shell');
+        const wrap = document.querySelector('.island-header-wrap');
+        const eyebrow = document.querySelector('.hero-eyebrow-line');
+        const hRect = header?.getBoundingClientRect();
+        const wRect = wrap?.getBoundingClientRect();
+        const eRect = eyebrow?.getBoundingClientRect();
+        return {
+          wrapTop: wRect?.top ?? 0,
+          headerBottom: hRect?.bottom ?? 0,
+          eyebrowTop: eRect?.top ?? 0,
+        };
+      });
+      assert(
+        geom.wrapTop >= 10,
+        `Expected .island-header-wrap top >= 10 at ${w}px, got ${geom.wrapTop}`
+      );
+      const skyGap = geom.eyebrowTop - geom.headerBottom;
+      assert(
+        skyGap >= minGap,
+        `Expected header-to-hero sky gap >= ${minGap}px at ${w}px, got ${skyGap}px`
+      );
     }
+
+    await pageA.waitForFunction(
+      () =>
+        !document
+          .querySelector('.island-header-wrap')
+          ?.hasAttribute('data-collapsed')
+    );
+
+    await pageA.evaluate(() => window.scrollTo({ top: 320, behavior: 'instant' }));
+    await pageA.waitForFunction(
+      () =>
+        document
+          .querySelector('.island-header-wrap')
+          ?.getAttribute('data-collapsed') === 'true',
+      undefined,
+      { timeout: 5000 }
+    );
+
+    await pageA.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+    await pageA.waitForFunction(
+      () =>
+        !document
+          .querySelector('.island-header-wrap')
+          ?.hasAttribute('data-collapsed'),
+      undefined,
+      { timeout: 5000 }
+    );
+    await pageA.setViewportSize({ width: 1440, height: 1100 });
   });
 
   await check('audience label describes connections; no fabricated base count', async () => {
