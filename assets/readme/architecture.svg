@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="680" viewBox="0 0 1200 680" role="img" aria-labelledby="arch-title arch-desc">
+  <title id="arch-title">Архитектура ToniVecherRadio и тракт звукового сигнала</title>
+  <desc id="arch-desc">Четыре подсистемы ToniVecherRadio: очистка метаданных и нарезка волны на сервере, детерминированные часы вещания и SSE с SQLite WAL, Web Audio DSP-цепочка в браузере и фазовый замок LivePhaseLock.</desc>
+
+  <defs>
+    <marker id="arrow-amber" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 1 1 L 9 5 L 1 9 z" fill="#e7bb94"/>
+    </marker>
+    <marker id="arrow-sage" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 1 1 L 9 5 L 1 9 z" fill="#b8c6ad"/>
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 1 1 L 9 5 L 1 9 z" fill="#38bdf8"/>
+    </marker>
+    <marker id="arrow-violet" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 1 1 L 9 5 L 1 9 z" fill="#a78bfa"/>
+    </marker>
+  </defs>
+
+  <!-- Canvas background -->
+  <rect width="1200" height="680" rx="26" fill="#181512"/>
+  <rect x="1" y="1" width="1198" height="678" rx="25" fill="none" stroke="#3d362d" stroke-width="2"/>
+
+  <!-- Section header -->
+  <g transform="translate(52 44)">
+    <text x="0" y="20" fill="#e7bb94" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" font-weight="600" letter-spacing="0.8">ТРАКТ СИГНАЛА И СИНХРОНИЗАЦИИ</text>
+    <text x="0" y="64" fill="#fcf9f4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="40" font-weight="600" letter-spacing="-1.0">Архитектура ToniVecherRadio</text>
+  </g>
+
+  <!-- Column labels -->
+  <g transform="translate(52 134)">
+    <rect x="0" y="0" width="522" height="36" rx="10" fill="#25211c" stroke="#3d362d" stroke-width="1.2"/>
+    <text x="261" y="24" text-anchor="middle" fill="#e0dcd4" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" font-weight="600">СЕРВЕР · Node.js (node:http + node:sqlite)</text>
+
+    <rect x="574" y="0" width="522" height="36" rx="10" fill="#25211c" stroke="#3d362d" stroke-width="1.2"/>
+    <text x="835" y="24" text-anchor="middle" fill="#e0dcd4" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" font-weight="600">БРАУЗЕР · React 19 + Web Audio API</text>
+  </g>
+
+  <!-- 01: Server Audio & Metadata Pipeline (Top Left) -->
+  <g id="node-audio-pipeline" transform="translate(52 186)">
+    <rect x="0" y="0" width="522" height="218" rx="20" fill="#221d17" stroke="#3d362d" stroke-width="1.5"/>
+    <rect x="24" y="22" width="12" height="28" rx="4" fill="#e7bb94"/>
+    <text x="48" y="43" fill="#fcf9f4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="24" font-weight="600">01 · Аудиотракт без утечки тегов</text>
+
+    <text x="24" y="84" fill="#e0dcd4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="20">• ffprobe проверяет сеты (&gt; 5 МБ, &gt; 30 с)</text>
+    <text x="24" y="120" fill="#e0dcd4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="20">• ffmpeg -map_metadata -1 ремуксит в кеш (0700)</text>
+    <text x="24" y="156" fill="#e0dcd4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="20">• 100 Гц s16le PCM строит 240 пиков + 60 зон тепла</text>
+    <text x="24" y="192" fill="#e7bb94" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">HTTP 206 Range → radiotv-live.&lt;ext&gt;</text>
+  </g>
+
+  <!-- 02: Broadcast Clock, PoW, SSE & SQLite (Bottom Left) -->
+  <g id="node-clock-sse" transform="translate(52 430)">
+    <rect x="0" y="0" width="522" height="218" rx="20" fill="#221d17" stroke="#3d362d" stroke-width="1.5"/>
+    <rect x="24" y="22" width="12" height="28" rx="4" fill="#b8c6ad"/>
+    <text x="48" y="43" fill="#fcf9f4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="24" font-weight="600">02 · Часы, PoW, SSE и SQLite WAL</text>
+
+    <text x="24" y="84" fill="#e0dcd4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="20">• Эпоха 2026-01-01T00:00:00Z + 3 сдвига каналов</text>
+    <text x="24" y="120" fill="#e0dcd4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="20">• SHA-256 PoW (000) + scrypt PIN + HMAC токен</text>
+    <text x="24" y="156" fill="#e0dcd4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="20">• SSE /api/radio/events (tick каждые 8 с)</text>
+    <text x="24" y="192" fill="#b8c6ad" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">node:sqlite WAL · сеты, отметки, чат</text>
+  </g>
+
+  <!-- 03: Client Web Audio DSP (Top Right) -->
+  <g id="node-web-audio" transform="translate(626 186)">
+    <rect x="0" y="0" width="522" height="218" rx="20" fill="#221d17" stroke="#3d362d" stroke-width="1.5"/>
+    <rect x="24" y="22" width="12" height="28" rx="4" fill="#38bdf8"/>
+    <text x="48" y="43" fill="#fcf9f4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="24" font-weight="600">03 · Клиентский Web Audio DSP</text>
+
+    <text x="24" y="84" fill="#e0dcd4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="20">• HeadroomGain + 10 полос EQ (32–16K, ±2 дБ)</text>
+    <text x="24" y="120" fill="#e0dcd4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="20">• Полки 52 Гц / 12.5 кГц + WaveShaper 2× tanh</text>
+    <text x="24" y="156" fill="#e0dcd4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="20">• DynamicsCompressor + AnalyserNode (FFT 256)</text>
+    <text x="24" y="192" fill="#38bdf8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">ChannelSplitter L/R + FadeGain (-60 дБ)</text>
+  </g>
+
+  <!-- 04: LivePhaseLock & LiveClock (Bottom Right) -->
+  <g id="node-phase-lock" transform="translate(626 430)">
+    <rect x="0" y="0" width="522" height="218" rx="20" fill="#221d17" stroke="#3d362d" stroke-width="1.5"/>
+    <rect x="24" y="22" width="12" height="28" rx="4" fill="#a78bfa"/>
+    <text x="48" y="43" fill="#fcf9f4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="24" font-weight="600">04 · Фазовый замок LivePhaseLock</text>
+
+    <text x="24" y="84" fill="#e0dcd4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="20">• LiveClock сужает [lo, hi] до субсекундной фазы</text>
+    <text x="24" y="120" fill="#e0dcd4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="20">• |Δ| &lt; 0.08 с: норма · 0.25–3.5 с: 0.985×/1.015×</text>
+    <text x="24" y="156" fill="#e0dcd4" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="20">• |Δ| &gt; 3.5 с: микрофейд 8 мс + плавный seek</text>
+    <text x="24" y="192" fill="#a78bfa" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">preservesPitch = true · без Icecast / HLS</text>
+  </g>
+
+  <!-- Connecting arrows between modules -->
+  <!-- 01 -> 03 (Audio stream) -->
+  <line x1="574" y1="295" x2="622" y2="295" stroke="#e7bb94" stroke-width="2.5" marker-end="url(#arrow-amber)"/>
+  <!-- 02 <-> 04 (SSE / API / PoW) -->
+  <line x1="578" y1="539" x2="622" y2="539" stroke="#b8c6ad" stroke-width="2.5" marker-start="url(#arrow-sage)" marker-end="url(#arrow-sage)"/>
+  <!-- 01 <-> 02 (Server clock & waveform DB) -->
+  <line x1="313" y1="406" x2="313" y2="426" stroke="#e7bb94" stroke-width="2.2" marker-start="url(#arrow-amber)" marker-end="url(#arrow-amber)"/>
+  <!-- 04 -> 03 (Phase lock rate/seek) -->
+  <line x1="887" y1="428" x2="887" y2="408" stroke="#a78bfa" stroke-width="2.2" marker-end="url(#arrow-violet)"/>
+</svg>
