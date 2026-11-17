@@ -1,0 +1,25 @@
+.radio-mark { flex: none; }
+.radio-mark[data-animated] .radio-mark__arc,
+.radio-mark[data-animated] .radio-mark__signal {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: radio-mark-breathe 11s cubic-bezier(.45, 0, .55, 1) infinite;
+  animation-play-state: paused;
+}
+.radio-mark[data-animated] .radio-mark__signal { animation-name: radio-mark-signal; }
+.radio-mark[data-active] .radio-mark__arc,
+.radio-mark[data-active] .radio-mark__signal { animation-play-state: running; }
+@keyframes radio-mark-breathe {
+  0%, 71%, 100% { transform: translateY(0) scale(1); opacity: 1; }
+  79% { transform: translateY(-.3px) scale(1.012); opacity: .9; }
+  88% { transform: translateY(.08px) scale(1); opacity: 1; }
+}
+@keyframes radio-mark-signal {
+  0%, 73%, 100% { transform: scaleY(1); opacity: 1; }
+  81% { transform: scaleY(.94); opacity: .8; }
+  90% { transform: scaleY(1); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .radio-mark[data-animated] .radio-mark__arc,
+  .radio-mark[data-animated] .radio-mark__signal { animation: none; }
+}

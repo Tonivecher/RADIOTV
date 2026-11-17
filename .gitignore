@@ -1,0 +1,37 @@
+# Зависимости и сборка
+node_modules/
+dist/
+coverage/
+.nyc_output/
+test-results/
+
+# Локальное состояние сервера и секреты
+server/.secret
+server/radiotv.sqlite
+server/radiotv.sqlite-*
+server/sets/
+server/cache/
+
+# Переменные окружения
+.env
+.env.*
+!.env.example
+
+# Временные файлы и артефакты проверок
+tmp/
+test-runs/
+evidence/
+*.log
+npm-debug.log*
+*.tmp
+*.temp
+*.swp
+*.pem
+*.key
+
+# Инструменты и ОС
+.playwright-cli/
+.hallmark/
+.reanimate/
+.DS_Store
+._*

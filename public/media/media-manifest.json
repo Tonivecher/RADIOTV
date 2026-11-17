@@ -1,0 +1,104 @@
+{
+  "source_url": "https://pixabay.com/videos/road-movement-sunset-sun-moscow-84970/",
+  "download_url": "https://cdn.pixabay.com/video/2021/08/13/84970-587646749_large.mp4",
+  "author": "alexborodai",
+  "author_url": "https://pixabay.com/users/alexborodai-22916014/",
+  "license_url": "https://pixabay.com/service/license-summary/",
+  "verified_on": "2026-11-11",
+  "source": {
+    "width": 3840,
+    "height": 2160,
+    "duration_sec": 43.37,
+    "bytes": 91058703
+  },
+  "edit": {
+    "source_in_sec": 7,
+    "source_duration_sec": 18,
+    "overlap_sec": 1.5,
+    "crossfade_sec": 1.4583333333333333,
+    "body_range_relative_sec": [
+      1.5,
+      16.5
+    ],
+    "tail_range_relative_sec": [
+      16.5,
+      18
+    ],
+    "head_range_relative_sec": [
+      0,
+      1.5
+    ],
+    "output_duration_sec": 16.5,
+    "fps": 24,
+    "audio": false,
+    "method": "body + xfade(tail, head); last frame reaches head before the loop boundary"
+  },
+  "assets": [
+    {
+      "file": "evening-poster.jpg",
+      "bytes": 88989,
+      "sha256": "795fc03308f7a05230b339bbbf358b742e03f4f2cb6f4245f3feaacd643c5d5d",
+      "probe": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "mjpeg",
+            "width": 1280,
+            "height": 720,
+            "avg_frame_rate": "25/1"
+          }
+        ],
+        "format": {
+          "duration": "0.040000",
+          "size": "88989"
+        }
+      },
+      "faststart": null
+    },
+    {
+      "file": "evening-mobile.mp4",
+      "bytes": 436571,
+      "sha256": "8dde04269213218a6a71ca0082a1a35026945d4dd7f4e9f47fd4ef2a60e688b6",
+      "probe": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "h264",
+            "width": 768,
+            "height": 432,
+            "avg_frame_rate": "24/1"
+          }
+        ],
+        "format": {
+          "duration": "16.500000",
+          "size": "436571"
+        }
+      },
+      "faststart": true
+    },
+    {
+      "file": "evening-desktop.mp4",
+      "bytes": 1487053,
+      "sha256": "4c3335f609b8d4bac15286c45b8e5b7cbaa3e0b7b33949b4c6f65957d95c1a55",
+      "probe": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "h264",
+            "width": 1280,
+            "height": 720,
+            "avg_frame_rate": "24/1"
+          }
+        ],
+        "format": {
+          "duration": "16.500000",
+          "size": "1487053"
+        }
+      },
+      "faststart": true
+    }
+  ]
+}
