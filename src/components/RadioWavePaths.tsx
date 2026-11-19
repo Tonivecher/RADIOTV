@@ -186,6 +186,7 @@ export const RadioWavePaths: React.FC<RadioWavePathsProps> = ({ channelId, class
 
     let startMs = 0;
     let lastMs = 0;
+    let lastPaintMs = 0;
     let rafId = 0;
     let onScreen = true;
     let active = onScreen && document.visibilityState === 'visible';
@@ -208,28 +209,32 @@ export const RadioWavePaths: React.FC<RadioWavePathsProps> = ({ channelId, class
 
     const tick = (nowMs: number) => {
       rafId = 0;
-      if (!active || reducedMotion) return;
+      if (!active || reducedMotion || document.hidden) return;
 
       if (!startMs) {
         startMs = nowMs;
         lastMs = nowMs;
       }
-      const dt = Math.min((nowMs - lastMs) / 1000, 0.05);
-      lastMs = nowMs;
-      frame.time += dt * 0.72;
 
-      const elapsed = nowMs - startMs;
-      for (let i = 0; i < frame.drawn.length; i++) {
-        if (frame.drawn[i] < 1) {
-          const local = (elapsed - (i % 7) * DRAW_STAGGER_MS) / DRAW_MS;
-          frame.drawn[i] = easeOutCubic(Math.min(Math.max(local, 0), 1));
+      if (nowMs - lastPaintMs >= 50) {
+        const dt = Math.min((nowMs - lastMs) / 1000, 0.08);
+        lastMs = nowMs;
+        lastPaintMs = nowMs;
+        frame.time += dt * 0.72;
+
+        const elapsed = nowMs - startMs;
+        for (let i = 0; i < frame.drawn.length; i++) {
+          if (frame.drawn[i] < 1) {
+            const local = (elapsed - (i % 7) * DRAW_STAGGER_MS) / DRAW_MS;
+            frame.drawn[i] = easeOutCubic(Math.min(Math.max(local, 0), 1));
+          }
         }
+
+        const { pointer } = frame;
+        pointer.amount += ((pointer.on ? 1 : 0) - pointer.amount) * 0.14;
+
+        paint();
       }
-
-      const { pointer } = frame;
-      pointer.amount += ((pointer.on ? 1 : 0) - pointer.amount) * 0.08;
-
-      paint();
       rafId = window.requestAnimationFrame(tick);
     };
 

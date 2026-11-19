@@ -594,13 +594,7 @@ export function FloatPanel({
         thaw();
       }}
     >
-      <div
-        className={`float-drift float-drift--${phase % 3}`}
-        style={{
-          animationDelay: `-${phase * 3.71}s`,
-          animationDuration: `${17 + (phase % 5) * 2.3}s`,
-        }}
-      >
+      <div className={`float-drift float-drift--${phase % 3}`}>
         <motion.div style={{ x: smoothTx, y: smoothTy }}>
           <motion.div
             className={className}

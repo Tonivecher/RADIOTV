@@ -1,6 +1,5 @@
 import React, { useEffect, useRef } from 'react';
 import { useReducedMotion } from 'framer-motion';
-import { getReactiveAudioEnergy } from '../audio/reactiveTelemetry';
 
 interface TactileDotMatrixProps {
   className?: string;
@@ -112,8 +111,6 @@ export const TactileDotMatrix: React.FC<TactileDotMatrixProps> = ({ className })
         }
       }
 
-      const nowSec = nowMs * 0.001;
-      const audio = reducedMotion ? { level: 0, isPlaying: false } : getReactiveAudioEnergy(nowSec);
       const { base, accent } = palette;
       const startX = ((width % DOT_STEP) + DOT_STEP) * 0.5;
       const startY = ((height % DOT_STEP) + DOT_STEP) * 0.5;
@@ -124,20 +121,6 @@ export const TactileDotMatrix: React.FC<TactileDotMatrixProps> = ({ className })
           let offsetX = 0;
           let offsetY = 0;
           let glow = 0;
-
-          if (!reducedMotion && audio.level > 0.04) {
-            const wave =
-              0.5 +
-              0.5 *
-                Math.sin(
-                  nowSec * 2.4 + gx * 0.018 - gy * 0.014 + Math.sin(nowSec * 0.7 + gy * 0.02)
-                );
-            const audioGlow = Math.max(0, wave - 0.58) * audio.level * 1.15;
-            if (audioGlow > 0.02) {
-              glow = Math.max(glow, audioGlow);
-              offsetY -= audioGlow * 1.6;
-            }
-          }
 
           if (!reducedMotion && pointer.amount > 0.002) {
             const dx = gx - pointer.x;
@@ -214,15 +197,13 @@ export const TactileDotMatrix: React.FC<TactileDotMatrixProps> = ({ className })
       pointer.y += (targetPointer.y - pointer.y) * 0.14;
       pointer.amount += ((targetPointer.on ? 1 : 0) - pointer.amount) * 0.1;
 
-      const audioActive = getReactiveAudioEnergy(nowMs * 0.001).isPlaying;
-      const frameBudget = targetPointer.on || ripples.length > 0 ? 16 : 42;
+      const frameBudget = targetPointer.on || ripples.length > 0 ? 20 : 42;
       if (nowMs - lastDrawMs >= frameBudget) {
         lastDrawMs = nowMs;
         drawFrame(nowMs);
       }
 
-      const settling =
-        audioActive || targetPointer.on || pointer.amount > 0.002 || ripples.length > 0;
+      const settling = targetPointer.on || pointer.amount > 0.002 || ripples.length > 0;
       if (settling) {
         rafId = window.requestAnimationFrame(tick);
       } else {
@@ -332,13 +313,6 @@ export const TactileDotMatrix: React.FC<TactileDotMatrixProps> = ({ className })
       attributeFilter: ['data-theme'],
     });
 
-    // Wake gently every second if playback starts while DSP section is visible
-    const pulseCheck = window.setInterval(() => {
-      if (onScreen && visible && !rafId && getReactiveAudioEnergy(performance.now() * 0.001).isPlaying) {
-        wake();
-      }
-    }, 900);
-
     document.addEventListener('visibilitychange', onVisibilityChange);
     host.addEventListener('pointermove', onPointerMove, { passive: true });
     host.addEventListener('pointerleave', onPointerLeave, { passive: true });
@@ -346,7 +320,6 @@ export const TactileDotMatrix: React.FC<TactileDotMatrixProps> = ({ className })
 
     return () => {
       stopLoop();
-      window.clearInterval(pulseCheck);
       resizeObserver.disconnect();
       intersectionObserver.disconnect();
       themeObserver.disconnect();

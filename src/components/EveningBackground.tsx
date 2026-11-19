@@ -348,7 +348,7 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
         renderer.renderFrame(canvas, mediaSource, {
           width,
           height,
-          dpr: window.devicePixelRatio || 1,
+          dpr: 1,
           overscanTopPx: 44,
           timeSec,
           profile,

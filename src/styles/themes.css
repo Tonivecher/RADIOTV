@@ -363,17 +363,16 @@ p {
   background: var(--header-bg);
   border: 1px solid var(--border);
   box-shadow: 0 12px 36px rgba(0,0,0,.16), 0 0 24px rgba(var(--accent-rgb), .06);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   text-shadow: 0 1px 2px rgba(0,0,0,.96), 0 0 10px rgba(0,0,0,.86), 0 3px 18px rgba(0,0,0,.68);
-  animation: spatial-header-aura 8s ease-in-out infinite;
-  transition: background 0.35s ease, color 0.35s ease, padding 0.26s ease, border-radius 0.26s ease, backdrop-filter 0.35s ease;
+  transition: background 0.35s ease, color 0.35s ease, padding 0.26s ease, border-radius 0.26s ease;
 }
 
 .island-header-wrap.is-scrolled .island-header-shell {
   background: var(--header-bg-scrolled);
-  backdrop-filter: blur(28px) saturate(150%);
-  -webkit-backdrop-filter: blur(28px) saturate(150%);
+  backdrop-filter: blur(14px) saturate(125%);
+  -webkit-backdrop-filter: blur(14px) saturate(125%);
 }
 
 .floating-glass-island {
@@ -828,8 +827,6 @@ p {
   border: 1px solid var(--border);
   border-radius: 24px;
   color: var(--text-primary);
-  backdrop-filter: blur(7px) saturate(118%);
-  -webkit-backdrop-filter: blur(7px) saturate(118%);
   box-shadow:
     inset 0 1px 0 rgba(255, 248, 236, 0.16),
     inset 0 -1px 0 rgba(0, 0, 0, 0.28),
@@ -857,8 +854,6 @@ p {
   margin-top: 34px;
   background: var(--panel-wave);
   border-color: var(--border);
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
 }
 
 .waveform-core {
@@ -1790,8 +1785,10 @@ p {
   border: 1px solid var(--border);
   border-radius: 24px;
   padding: 32px;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 248, 236, 0.14),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.26),
+    0 16px 38px rgba(0, 0, 0, 0.18);
   text-shadow: 0 1px 2px rgba(0,0,0,.96), 0 0 10px rgba(0,0,0,.86), 0 3px 18px rgba(0,0,0,.68);
   transition: background 0.55s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.55s cubic-bezier(0.22, 1, 0.36, 1), color 0.55s cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -2845,17 +2842,21 @@ p {
   color: var(--text-primary);
 }
 
-/* Separate layers keep drift independent from pointer depth and hover tilt. */
+/* Smooth cross-dissolve entrance as the metro doors open. */
 .radio-content {
   min-width: 0;
   padding-top: 92px;
   opacity: 1;
-  transition: opacity 0.68s cubic-bezier(0.22, 1, 0.36, 1);
+  transform: translateY(0) scale(1);
+  transition:
+    opacity 0.9s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.9s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .radio-content[data-boot-hidden] {
   visibility: hidden;
   opacity: 0;
+  transform: translateY(10px) scale(1.01);
 }
 
 @media (max-width: 1100px) {
@@ -2876,16 +2877,11 @@ p {
   margin-top: 0;
 }
 
-.float-drift {
-  animation: spatial-drift-a 19s ease-in-out infinite;
-}
-
-.float-drift--1 {
-  animation-name: spatial-drift-b;
-}
-
+/* Infinite ambient CSS drift disabled to prevent continuous Chrome Blink/Viz layer repainting */
+.float-drift,
+.float-drift--1,
 .float-drift--2 {
-  animation-name: spatial-drift-c;
+  animation: none;
 }
 
 .float-slot[data-paused] > .float-drift,
@@ -3408,13 +3404,9 @@ p {
   .glass-double-shell,
   .lounge-telemetry-col {
     background: var(--panel);
-    backdrop-filter: blur(5px);
-    -webkit-backdrop-filter: blur(5px);
   }
   .waveform-shell {
     background: var(--panel-wave);
-    backdrop-filter: blur(2px);
-    -webkit-backdrop-filter: blur(2px);
   }
 }
 

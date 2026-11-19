@@ -28,19 +28,16 @@ export interface AsciiRenderOptions {
 }
 
 const TAU = Math.PI * 2;
-const QUANT_SHIFT = 4;
 const MATRIX_CHARS = '·:;=+*#%@012345789∆∇◊░▒▓';
 const GLITCH_STRIPS = ['01 // ∆◊', '░▒▓ :: 79', '∆ 104.2 // ░', '▓▒░ + #01'];
+const SAMPLE_INTERVAL_MS = 84;
+const ATLAS_TONE_ROWS = 4;
 
 interface ColorLuts {
   key: string;
-  duotoneMix: number;
   r: Uint8Array;
   g: Uint8Array;
   b: Uint8Array;
-  rampR: Uint8Array;
-  rampG: Uint8Array;
-  rampB: Uint8Array;
 }
 
 interface CoverRect {
@@ -48,13 +45,6 @@ interface CoverRect {
   sy: number;
   sw: number;
   sh: number;
-}
-
-interface GlyphPoint {
-  x: number;
-  y: number;
-  char: string;
-  colorKey: number;
 }
 
 function clamp01(value: number): number {
@@ -105,36 +95,6 @@ function buildChannelLut(
     lut[i] = clampByte(blended);
   }
   return lut;
-}
-
-function buildToneRamp(
-  shadowHex: string,
-  midHex: string,
-  highlightHex: string,
-  contrastFactor: number
-): { rampR: Uint8Array; rampG: Uint8Array; rampB: Uint8Array } {
-  const [sr, sg, sb] = parseHexColor(shadowHex);
-  const [mr, mg, mb] = parseHexColor(midHex);
-  const [hr, hg, hb] = parseHexColor(highlightHex);
-  const rampR = new Uint8Array(256);
-  const rampG = new Uint8Array(256);
-  const rampB = new Uint8Array(256);
-
-  for (let i = 0; i < 256; i++) {
-    const contrasted = Math.max(0, Math.min(255, (i - 128) * contrastFactor + 128));
-    if (contrasted <= 145) {
-      const t = contrasted / 145;
-      rampR[i] = clampByte(sr + (mr - sr) * t);
-      rampG[i] = clampByte(sg + (mg - sg) * t);
-      rampB[i] = clampByte(sb + (mb - sb) * t);
-    } else {
-      const t = (contrasted - 145) / 110;
-      rampR[i] = clampByte(mr + (hr - mr) * t);
-      rampG[i] = clampByte(mg + (hg - mg) * t);
-      rampB[i] = clampByte(mb + (hb - mb) * t);
-    }
-  }
-  return { rampR, rampG, rampB };
 }
 
 function computeCoverRect(
@@ -196,78 +156,114 @@ export class AsciiDotsRenderer {
   private readonly blurCtx: CanvasRenderingContext2D;
   private readonly dotsCanvas: HTMLCanvasElement;
   private readonly dotsCtx: CanvasRenderingContext2D;
-  private readonly bloomCanvasA: HTMLCanvasElement;
-  private readonly bloomCtxA: CanvasRenderingContext2D;
-  private readonly bloomCanvasB: HTMLCanvasElement;
-  private readonly bloomCtxB: CanvasRenderingContext2D;
+  private readonly bloomCanvas: HTMLCanvasElement;
+  private readonly bloomCtx: CanvasRenderingContext2D;
+  private readonly atlasCanvas: HTMLCanvasElement;
+  private readonly atlasCtx: CanvasRenderingContext2D;
 
   private luts: ColorLuts | null = null;
+  private atlasKey = '';
+  private atlasSlot = 16;
   private vignetteGradient: CanvasGradient | null = null;
   private vignetteKey = '';
-  private readonly colorLabels = new Map<number, string>();
-  private readonly buckets = new Map<number, number[]>();
-  private readonly glyphQueue: GlyphPoint[] = [];
+
+  private cachedPixels: Uint8ClampedArray | null = null;
+  private cachedCols = 0;
+  private cachedRows = 0;
+  private lastSampleAt = -Infinity;
 
   constructor(config: AsciiPipelineConfig = ASCII_DOTS_CONFIG) {
     this.config = config;
     this.sampleCanvas = document.createElement('canvas');
     this.blurCanvas = document.createElement('canvas');
     this.dotsCanvas = document.createElement('canvas');
-    this.bloomCanvasA = document.createElement('canvas');
-    this.bloomCanvasB = document.createElement('canvas');
+    this.bloomCanvas = document.createElement('canvas');
+    this.atlasCanvas = document.createElement('canvas');
 
     const sampleCtx = this.sampleCanvas.getContext('2d', {
       willReadFrequently: true,
     });
     const blurCtx = this.blurCanvas.getContext('2d');
     const dotsCtx = this.dotsCanvas.getContext('2d');
-    const bloomCtxA = this.bloomCanvasA.getContext('2d');
-    const bloomCtxB = this.bloomCanvasB.getContext('2d');
+    const bloomCtx = this.bloomCanvas.getContext('2d');
+    const atlasCtx = this.atlasCanvas.getContext('2d');
 
-    if (!sampleCtx || !blurCtx || !dotsCtx || !bloomCtxA || !bloomCtxB) {
+    if (!sampleCtx || !blurCtx || !dotsCtx || !bloomCtx || !atlasCtx) {
       throw new Error('2D canvas context unavailable for ASCII renderer');
     }
 
     this.sampleCtx = sampleCtx;
     this.blurCtx = blurCtx;
     this.dotsCtx = dotsCtx;
-    this.bloomCtxA = bloomCtxA;
-    this.bloomCtxB = bloomCtxB;
+    this.bloomCtx = bloomCtx;
+    this.atlasCtx = atlasCtx;
   }
 
   private ensureLuts(profile: AsciiChannelProfile): ColorLuts {
     const contrast = this.config.contrast / 100;
     const tintOpacity = this.config.tintOpacity / 100;
-    const mixRounded = profile.duotoneMix.toFixed(3);
-    const key = `${profile.shadowHex}|${profile.tintHex}|${profile.highlightHex}|${mixRounded}|${contrast}|${tintOpacity}`;
+    const key = `${profile.tintHex}|${contrast}|${tintOpacity}`;
     if (this.luts && this.luts.key === key) {
       return this.luts;
     }
     const [tr, tg, tb] = parseHexColor(profile.tintHex);
-    const ramp = buildToneRamp(profile.shadowHex, profile.tintHex, profile.highlightHex, contrast);
     this.luts = {
       key,
-      duotoneMix: profile.duotoneMix,
       r: buildChannelLut(tr, contrast, tintOpacity),
       g: buildChannelLut(tg, contrast, tintOpacity),
       b: buildChannelLut(tb, contrast, tintOpacity),
-      rampR: ramp.rampR,
-      rampG: ramp.rampG,
-      rampB: ramp.rampB,
     };
     return this.luts;
   }
 
-  private getColorString(key: number): string {
-    let label = this.colorLabels.get(key);
-    if (!label) {
-      const r = Math.min(232, ((key >> 8) & 15) * 16 + 8);
-      const g = Math.min(232, ((key >> 4) & 15) * 16 + 8);
-      const b = Math.min(232, (key & 15) * 16 + 8);
-      label = `rgb(${r},${g},${b})`;
-      this.colorLabels.set(key, label);
+  /**
+   * Pre-render all Matrix glyphs into a compact 4-row sprite atlas (shadow, tint, highlight, rain-head).
+   * Drawing sprites with drawImage() avoids thousands of Skia CPU fillText() calls per frame in Chrome.
+   */
+  private ensureAtlas(profile: AsciiChannelProfile, cellSize: number): number {
+    const slot = Math.max(12, Math.ceil(cellSize * 1.15));
+    const key = `${profile.shadowHex}|${profile.tintHex}|${profile.highlightHex}|${slot}`;
+    if (this.atlasKey === key && this.atlasCanvas.width > 0) {
+      return this.atlasSlot;
     }
-    return label;
+
+    const [sr, sg, sb] = parseHexColor(profile.shadowHex);
+    const [tr, tg, tb] = parseHexColor(profile.tintHex);
+    const [hr, hg, hb] = parseHexColor(profile.highlightHex);
+
+    const rowColors = [
+      // Row 0: muted shadow-midtone glyph
+      `rgb(${clampByte(sr * 0.45 + tr * 0.55)},${clampByte(sg * 0.45 + tg * 0.55)},${clampByte(sb * 0.45 + tb * 0.55)})`,
+      // Row 1: primary channel tint glyph
+      `rgb(${clampByte(tr * 0.96)},${clampByte(tg * 0.96)},${clampByte(tb * 0.96)})`,
+      // Row 2: luminous highlight glyph
+      `rgb(${clampByte(Math.min(232, hr))},${clampByte(Math.min(228, hg))},${clampByte(Math.min(220, hb))})`,
+      // Row 3: warm rain-head glyph (never pure white)
+      `rgb(${clampByte(Math.min(234, hr * 0.5 + 236 * 0.5))},${clampByte(Math.min(228, hg * 0.5 + 228 * 0.5))},${clampByte(Math.min(218, hb * 0.5 + 214 * 0.5))})`,
+    ];
+
+    const charCount = MATRIX_CHARS.length;
+    this.atlasCanvas.width = charCount * slot;
+    this.atlasCanvas.height = ATLAS_TONE_ROWS * slot;
+    this.atlasCtx.clearRect(0, 0, this.atlasCanvas.width, this.atlasCanvas.height);
+
+    const fontPx = Math.max(9, Math.round(cellSize * 0.94));
+    this.atlasCtx.font = `700 ${fontPx}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
+    this.atlasCtx.textAlign = 'center';
+    this.atlasCtx.textBaseline = 'middle';
+
+    const half = slot * 0.5;
+    for (let row = 0; row < ATLAS_TONE_ROWS; row++) {
+      this.atlasCtx.fillStyle = rowColors[row];
+      const cy = row * slot + half;
+      for (let i = 0; i < charCount; i++) {
+        this.atlasCtx.fillText(MATRIX_CHARS[i], i * slot + half, cy);
+      }
+    }
+
+    this.atlasKey = key;
+    this.atlasSlot = slot;
+    return slot;
   }
 
   private ensureVignette(
@@ -393,45 +389,46 @@ export class AsciiDotsRenderer {
     height: number,
     timeSec: number,
     surge: number,
-    accentHex: string
+    accentHex: string,
+    highlightHex: string,
+    tintHex: string
   ): void {
-    const tick = Math.floor(timeSec * 28);
-    const bandCount = Math.max(5, Math.round(6 + surge * 10));
-    const chromaColors = ['#ff385c', '#4de4f4', '#b19ce8', accentHex];
+    const tick = Math.floor(timeSec * 16);
+    const bandCount = Math.max(3, Math.round(4 + surge * 5));
+    const chromaColors = [accentHex, highlightHex, tintHex];
 
     ctx.save();
     for (let i = 0; i < bandCount; i++) {
       const seed = tick * 31 + i * 53;
-      const yFrac = pseudoRand(seed + 1) * 0.94 + 0.02;
-      const hFrac = (0.008 + pseudoRand(seed + 2) * 0.036) * (0.65 + surge * 0.8);
+      const yFrac = pseudoRand(seed + 1) * 0.92 + 0.04;
+      const hFrac = (0.006 + pseudoRand(seed + 2) * 0.024) * (0.65 + surge * 0.6);
       const dstY = yFrac * height;
-      const dstH = Math.max(3, hFrac * height);
+      const dstH = Math.max(2, hFrac * height);
       const srcY = crop.sy + yFrac * crop.sh;
       const srcH = Math.max(1, hFrac * crop.sh);
-      const shiftX = (pseudoRand(seed + 3) - 0.5) * 2 * (18 + surge * 68);
+      const shiftX = (pseudoRand(seed + 3) - 0.5) * 2 * (10 + surge * 34);
 
-      // Torn horizontal video strip shifted sideways
+      // Soft horizontal video strip drift
       ctx.globalCompositeOperation = 'source-over';
-      ctx.globalAlpha = Math.min(0.88, 0.35 + surge * 0.52);
+      ctx.globalAlpha = Math.min(0.62, 0.22 + surge * 0.36);
       ctx.drawImage(source, crop.sx, srcY, crop.sw, srcH, shiftX, dstY, width, dstH);
 
-      // Chromatic RGB / cyan / violet signal split along the tear edge
+      // Palette-matched optical hairline along the shift edge
       const chroma = chromaColors[i % chromaColors.length];
       ctx.globalCompositeOperation = 'screen';
-      ctx.globalAlpha = Math.min(0.55, 0.16 + surge * 0.42);
+      ctx.globalAlpha = Math.min(0.32, 0.08 + surge * 0.22);
       ctx.fillStyle = chroma;
-      ctx.fillRect(shiftX * 0.65, dstY, width, Math.max(1.5, dstH * 0.24));
+      ctx.fillRect(shiftX * 0.5, dstY, width, Math.max(1, dstH * 0.16));
 
-      // ASCII signal burst characters along key bands
-      if (i % 2 === 0) {
+      if (i % 3 === 0) {
         const strip = GLITCH_STRIPS[Math.floor(pseudoRand(seed + 7) * GLITCH_STRIPS.length)];
-        const tx = width * (0.06 + pseudoRand(seed + 11) * 0.84);
-        ctx.font = '700 12px ui-monospace, SFMono-Regular, Menlo, monospace';
+        const tx = width * (0.08 + pseudoRand(seed + 11) * 0.8);
+        ctx.font = '600 11px ui-monospace, SFMono-Regular, Menlo, monospace';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
-        ctx.globalAlpha = Math.min(0.75, 0.24 + surge * 0.55);
-        ctx.fillStyle = i % 4 === 0 ? '#4de4f4' : accentHex;
-        ctx.fillText(`${strip} // ░+`, tx, dstY + dstH * 0.5);
+        ctx.globalAlpha = Math.min(0.45, 0.14 + surge * 0.32);
+        ctx.fillStyle = highlightHex;
+        ctx.fillText(`${strip} // ░`, tx, dstY + dstH * 0.5);
       }
     }
     ctx.restore();
@@ -444,7 +441,8 @@ export class AsciiDotsRenderer {
   ): boolean {
     const width = Math.max(1, Math.round(options.width));
     const height = Math.max(1, Math.round(options.height));
-    const dpr = Math.max(1, Math.min(2, options.dpr || 1));
+    // Cap background ambient canvas at DPR=1 for smooth 60fps Chrome compositing on Retina/4K screens
+    const dpr = Math.max(1, Math.min(1, options.dpr || 1));
     const pixelW = Math.round(width * dpr);
     const pixelH = Math.round(height * dpr);
     const { profile } = options;
@@ -470,7 +468,7 @@ export class AsciiDotsRenderer {
     }
 
     const asciiMix = clamp01(profile.asciiMix);
-    const cellSize = Math.max(8, Math.round(profile.cellSize));
+    const cellSize = Math.max(10, Math.round(profile.cellSize));
     const cols = Math.max(1, Math.ceil(width / cellSize));
     const rows = Math.max(1, Math.ceil(height / cellSize));
     const crop = computeCoverRect(dims.width, dims.height, width, height, options.scale ?? 1);
@@ -480,40 +478,54 @@ export class AsciiDotsRenderer {
     let effectiveGlitch = 0;
     if (animated && (profile.glitchIntensity > 0.01 || transferSurge > 0.01)) {
       if (options.continuousGlitch || transferSurge > 0.02) {
-        effectiveGlitch = clamp01(profile.glitchIntensity + transferSurge * 0.72);
+        effectiveGlitch = clamp01(profile.glitchIntensity + transferSurge * 0.52);
       } else {
         const wave =
           0.5 +
           0.28 * Math.sin(options.timeSec * 1.45) +
           0.22 * Math.sin(options.timeSec * 0.57 + 1.7);
         const burst = clamp01((wave - 0.62) / 0.32);
-        const audioKick = Math.max(0, audioLevel - 0.55) * 0.65;
+        const audioKick = Math.max(0, audioLevel - 0.55) * 0.55;
         effectiveGlitch = clamp01(profile.glitchIntensity * (0.2 + 0.8 * burst) + audioKick);
       }
     }
 
-    // 1. Sample downsampled source for luminance + dot quantization
-    if (this.sampleCanvas.width !== cols || this.sampleCanvas.height !== rows) {
-      this.sampleCanvas.width = cols;
-      this.sampleCanvas.height = rows;
+    // 1. Throttled video luminance sampling (~12Hz) to avoid synchronous GPU->CPU readback every frame
+    const nowMs = options.timeSec * 1000;
+    const sampleInterval = transferSurge > 0.05 ? 48 : SAMPLE_INTERVAL_MS;
+    const needsResample =
+      !this.cachedPixels ||
+      this.cachedCols !== cols ||
+      this.cachedRows !== rows ||
+      nowMs - this.lastSampleAt >= sampleInterval ||
+      nowMs < this.lastSampleAt;
+
+    if (needsResample) {
+      if (this.sampleCanvas.width !== cols || this.sampleCanvas.height !== rows) {
+        this.sampleCanvas.width = cols;
+        this.sampleCanvas.height = rows;
+      }
+      this.sampleCtx.imageSmoothingEnabled = true;
+      this.sampleCtx.imageSmoothingQuality = 'low';
+      this.sampleCtx.drawImage(source, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, cols, rows);
+      this.cachedPixels = this.sampleCtx.getImageData(0, 0, cols, rows).data;
+      this.cachedCols = cols;
+      this.cachedRows = rows;
+      this.lastSampleAt = nowMs;
     }
-    this.sampleCtx.imageSmoothingEnabled = true;
-    this.sampleCtx.imageSmoothingQuality = 'medium';
-    this.sampleCtx.drawImage(source, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, cols, rows);
-    const pixels = this.sampleCtx.getImageData(0, 0, cols, rows).data;
+    const pixels = this.cachedPixels!;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
     ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
+    ctx.imageSmoothingQuality = 'medium';
 
-    // 2. ALWAYS render the live crisp video frame on ALL channels (Основной, Deep, DeepTech)
+    // 2. Render live video frame on ALL channels
     ctx.drawImage(source, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, width, height);
 
-    // Subtle atmospheric soften only if bgBlur >= 1 (kept very transparent so video remains clear)
     if (profile.bgBlur >= 0.8) {
-      const blurScale = Math.max(3, Math.round(profile.bgBlur * 2.5));
+      const blurScale = Math.max(4, Math.round(profile.bgBlur * 2.5));
       const blurW = Math.max(24, Math.round(width / blurScale));
       const blurH = Math.max(18, Math.round(height / blurScale));
       if (this.blurCanvas.width !== blurW || this.blurCanvas.height !== blurH) {
@@ -527,22 +539,17 @@ export class AsciiDotsRenderer {
       ctx.globalAlpha = 1;
     }
 
-    // Channel mood color-grading tint over the live video (ruby for Deep, indigo-amethyst for DeepTech)
+    // Channel mood color-grading tint over the live video (single multiply pass for fast compositing)
     if (profile.duotoneMix > 0.16) {
       ctx.save();
       ctx.globalCompositeOperation = 'multiply';
-      ctx.globalAlpha = clamp01(profile.duotoneMix * 0.44);
-      ctx.fillStyle = profile.tintHex;
-      ctx.fillRect(0, 0, width, height);
-
-      ctx.globalCompositeOperation = 'color';
-      ctx.globalAlpha = clamp01(profile.duotoneMix * 0.36);
+      ctx.globalAlpha = clamp01(profile.duotoneMix * 0.56);
       ctx.fillStyle = profile.tintHex;
       ctx.fillRect(0, 0, width, height);
       ctx.restore();
     }
 
-    // Light translucent atmospheric veil (never opaque: capped at <= 34% so live video always shines through)
+    // Light translucent atmospheric veil (capped at <= 34% so live video always shines through)
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = Math.min(0.34, clamp01(profile.bgOpacity / 100));
     ctx.fillStyle = profile.bgColor;
@@ -557,27 +564,27 @@ export class AsciiDotsRenderer {
         width,
         height,
         options.timeSec,
-        effectiveGlitch * 0.85,
+        effectiveGlitch * 0.78,
         profile.accentGlowHex,
         profile.glyphAccent > 0.2
       );
     }
 
-    // 3. Render composite Matrix-style ASCII character grid + digital rain streams layered OVER the live video
+    // 3. Render Matrix-style ASCII character grid using pre-rendered Sprite Atlas (zero per-frame fillText)
     if (this.dotsCanvas.width !== pixelW || this.dotsCanvas.height !== pixelH) {
       this.dotsCanvas.width = pixelW;
       this.dotsCanvas.height = pixelH;
     }
     this.dotsCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.dotsCtx.clearRect(0, 0, width, height);
+    this.dotsCtx.imageSmoothingEnabled = false;
 
     const luts = this.ensureLuts(profile);
-    this.buckets.forEach((arr) => {
-      arr.length = 0;
-    });
-    this.glyphQueue.length = 0;
+    const atlasSlot = this.ensureAtlas(profile, cellSize);
+    const halfSlot = atlasSlot * 0.5;
+    const atlas = this.atlasCanvas;
 
-    const pulseDepth = (0.16 + audioLevel * 0.24) * (this.config.animIntensity / 100);
+    const pulseDepth = (0.16 + audioLevel * 0.22) * (this.config.animIntensity / 100);
     const beatPhase = options.timeSec * (profile.grooveBpm / 120) * TAU;
     const beatSwell = animated ? Math.pow(0.5 + 0.5 * Math.sin(beatPhase), 1.5) : 0.5;
     const halfCols = cols * 0.5;
@@ -585,26 +592,24 @@ export class AsciiDotsRenderer {
     const ptrCol = ptrX * cols;
     const ptrRow = ptrY * rows;
     const halfCell = cellSize * 0.5;
-    const duotoneMix = luts.duotoneMix;
-    const keepMix = 1 - duotoneMix;
-    const lumThreshold = 0.30 * (1 - asciiMix) + 0.11 * asciiMix;
-    const edgeGate = Math.max(0.012, (1 - asciiMix * 1.15) * 0.082);
-    const flickerBucket = animated ? Math.floor(options.timeSec * (8 + audioLevel * 8)) : 0;
+    const lumThreshold = 0.30 * (1 - asciiMix) + 0.12 * asciiMix;
+    const edgeGate = Math.max(0.015, (1 - asciiMix * 1.15) * 0.085);
+    const flickerBucket = animated ? Math.floor(options.timeSec * (7 + audioLevel * 7)) : 0;
     const rainSpan = rows + 18;
-    const rainSpeedScale = 1 + transferSurge * 2.4 + audioLevel * 0.45;
+    const rainSpeedScale = 1 + transferSurge * 1.9 + audioLevel * 0.4;
     const charCount = MATRIX_CHARS.length;
 
     for (let col = 0; col < cols; col++) {
       const cx = col * cellSize + halfCell;
       const dx = col - halfCols;
-      // Per-column Matrix digital rain stream parameters
       const colSeed = pseudoRand(col * 19.73 + 7.13);
-      const colActive = colSeed < 0.42 + asciiMix * 0.38 + transferSurge * 0.35;
-      const colSpeed = (3.2 + pseudoRand(col * 37.19) * 5.8) * rainSpeedScale;
+      const colActive = colSeed < 0.4 + asciiMix * 0.36 + transferSurge * 0.3;
+      const colSpeed = (3.0 + pseudoRand(col * 37.19) * 5.2) * rainSpeedScale;
       const colPhase = pseudoRand(col * 71.41) * rainSpan;
-      const rainHead = animated && colActive
-        ? ((options.timeSec * colSpeed + colPhase) % rainSpan) - 6
-        : -999;
+      const rainHead =
+        animated && colActive
+          ? ((options.timeSec * colSpeed + colPhase) % rainSpan) - 6
+          : -999;
 
       for (let row = 0; row < rows; row++) {
         const cy = row * cellSize + halfCell;
@@ -617,7 +622,6 @@ export class AsciiDotsRenderer {
         const lumByte = (54 * baseR + 183 * baseG + 19 * baseB) >> 8;
         const lum = lumByte / 255;
 
-        // Distance behind the falling Matrix stream head in this column
         const rainDist = rainHead - row;
         const inRainStream = animated && colActive && rainDist >= 0 && rainDist < 11;
         const isRainHead = inRainStream && rainDist < 1.35;
@@ -625,7 +629,6 @@ export class AsciiDotsRenderer {
 
         if (lum + rainGain < lumThreshold) continue;
 
-        // Selective contour/silhouette + Matrix stream emphasis so live video remains recognizable underneath
         const rightIdx = col + 1 < cols ? (rowOffset + col + 1) * 4 : idx;
         const downIdx = row + 1 < rows ? ((row + 1) * cols + col) * 4 : idx;
         const neighborDiff =
@@ -634,49 +637,21 @@ export class AsciiDotsRenderer {
             Math.abs(pixels[idx + 1] - pixels[downIdx + 1])
           ) / 255;
 
-        const ptrDist = Math.hypot(col - ptrCol, row - ptrRow);
-        const cursorLift = animated && ptrDist < 15 ? (1 - ptrDist / 15) * 0.28 : 0;
+        const dCol = col - ptrCol;
+        const dRow = row - ptrRow;
+        const ptrDistSq = dCol * dCol + dRow * dRow;
+        const cursorLift = animated && ptrDistSq < 225 ? (1 - Math.sqrt(ptrDistSq) / 15) * 0.28 : 0;
         const hashMatch =
-          ((col * 19 + row * 37 + flickerBucket * 5) & 15) < (3 + Math.round(asciiMix * 9));
+          ((col * 19 + row * 37 + flickerBucket * 5) & 15) < (3 + Math.round(asciiMix * 8));
 
         if (
           !inRainStream &&
           neighborDiff < edgeGate &&
-          lum + cursorLift < 0.52 - asciiMix * 0.2 &&
+          lum + cursorLift < 0.54 - asciiMix * 0.2 &&
           !hashMatch
         ) {
           continue;
         }
-
-        let r =
-          duotoneMix > 0
-            ? clampByte(baseR * keepMix + luts.rampR[lumByte] * duotoneMix)
-            : baseR;
-        let g =
-          duotoneMix > 0
-            ? clampByte(baseG * keepMix + luts.rampG[lumByte] * duotoneMix)
-            : baseG;
-        let b =
-          duotoneMix > 0
-            ? clampByte(baseB * keepMix + luts.rampB[lumByte] * duotoneMix)
-            : baseB;
-
-        if (isRainHead) {
-          // Bright leading Matrix symbol head
-          r = clampByte(r * 0.55 + 236 * 0.45);
-          g = clampByte(g * 0.55 + 228 * 0.45);
-          b = clampByte(b * 0.55 + 214 * 0.45);
-        } else if (inRainStream) {
-          const boost = 1 + rainGain * 0.65;
-          r = clampByte(r * boost);
-          g = clampByte(g * boost);
-          b = clampByte(b * boost);
-        }
-
-        const key =
-          ((r >> QUANT_SHIFT) << 8) |
-          ((g >> QUANT_SHIFT) << 4) |
-          (b >> QUANT_SHIFT);
 
         let effectiveEnergy = clamp01(
           lum * 0.85 + neighborDiff * 0.55 + rainGain * 0.8 + cursorLift * 0.65
@@ -690,54 +665,48 @@ export class AsciiDotsRenderer {
 
         let charIdx: number;
         if (isRainHead || (inRainStream && ((row + flickerBucket) & 3) === 0)) {
-          // Mutating Matrix cyber-glyphs in active stream
           const streamHash = (col * 29 + row * 17 + flickerBucket * 13) & 31;
-          charIdx = Math.min(
-            charCount - 1,
-            8 + (streamHash % Math.max(1, charCount - 8))
-          );
+          charIdx = Math.min(charCount - 1, 8 + (streamHash % Math.max(1, charCount - 8)));
         } else {
-          // Contour & luminance-driven symbol selection with gentle shimmer
           const baseIdx = Math.floor(effectiveEnergy * (charCount - 1));
           const shimmer =
             animated && ((col * 11 + row * 23 + flickerBucket) & 15) === 0 ? 1 : 0;
           charIdx = Math.max(0, Math.min(charCount - 1, baseIdx + shimmer));
         }
 
+        const toneRow = isRainHead
+          ? 3
+          : effectiveEnergy > 0.68 || (inRainStream && rainGain > 0.22)
+            ? 2
+            : effectiveEnergy > 0.38
+              ? 1
+              : 0;
+
         const jitterX =
-          animated && (audioLevel > 0.38 || transferSurge > 0.1) && ((col + row + flickerBucket) & 7) === 0
+          animated &&
+          (audioLevel > 0.38 || transferSurge > 0.1) &&
+          ((col + row + flickerBucket) & 7) === 0
             ? (pseudoRand(col * 13 + row * 7 + flickerBucket) - 0.5) *
-              (2.2 * (audioLevel + transferSurge))
+              (2.0 * (audioLevel + transferSurge))
             : 0;
 
-        let list = this.buckets.get(key);
-        if (!list) {
-          list = [];
-          this.buckets.set(key, list);
-        }
-        list.push(cx + jitterX, cy, charIdx);
+        this.dotsCtx.drawImage(
+          atlas,
+          charIdx * atlasSlot,
+          toneRow * atlasSlot,
+          atlasSlot,
+          atlasSlot,
+          cx + jitterX - halfSlot,
+          cy - halfSlot,
+          atlasSlot,
+          atlasSlot
+        );
       }
     }
 
-    const fontPx = Math.max(9, Math.round(cellSize * 0.96));
-    this.dotsCtx.font = `700 ${fontPx}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
-    this.dotsCtx.textAlign = 'center';
-    this.dotsCtx.textBaseline = 'middle';
-
-    for (const [key, coords] of this.buckets.entries()) {
-      if (coords.length === 0) continue;
-      this.dotsCtx.fillStyle = this.getColorString(key);
-      for (let i = 0; i < coords.length; i += 3) {
-        const gx = coords[i];
-        const gy = coords[i + 1];
-        const cIdx = coords[i + 2];
-        this.dotsCtx.fillText(MATRIX_CHARS[cIdx] || '+', gx, gy);
-      }
-    }
-
-    // 4. Composite luminous ASCII layer over live video via `screen` blend so video reads cleanly underneath
+    // 4. Composite luminous ASCII layer over live video via `screen` blend
     const rhythmAlpha = animated ? 0.88 + 0.12 * beatSwell + audioLevel * 0.14 : 0.94;
-    const baseDotsAlpha = 0.24 + asciiMix * 0.52;
+    const baseDotsAlpha = 0.24 + asciiMix * 0.5;
     const dotsAlpha = clamp01(baseDotsAlpha * rhythmAlpha);
 
     ctx.save();
@@ -753,7 +722,7 @@ export class AsciiDotsRenderer {
         width,
         height,
         options.timeSec,
-        effectiveGlitch * (0.45 + asciiMix * 0.55),
+        effectiveGlitch * (0.4 + asciiMix * 0.5),
         profile.accentGlowHex
       );
     }
@@ -767,48 +736,40 @@ export class AsciiDotsRenderer {
         height,
         options.timeSec,
         transferSurge,
-        profile.accentGlowHex
+        profile.accentGlowHex,
+        profile.highlightHex,
+        profile.tintHex
       );
     }
 
-    // 5. 2-pass cross-browser bloom glow
+    // 5. Single-pass lightweight bloom glow (width/10 x height/10)
     if (this.config.bloomEnabled && profile.bloomIntensity > 1) {
-      const bloomW1 = Math.max(32, Math.round(width / 4));
-      const bloomH1 = Math.max(24, Math.round(height / 4));
-      const bloomW2 = Math.max(16, Math.round(width / 10));
-      const bloomH2 = Math.max(12, Math.round(height / 10));
+      const bloomW = Math.max(24, Math.round(width / 10));
+      const bloomH = Math.max(18, Math.round(height / 10));
 
-      if (this.bloomCanvasA.width !== bloomW1 || this.bloomCanvasA.height !== bloomH1) {
-        this.bloomCanvasA.width = bloomW1;
-        this.bloomCanvasA.height = bloomH1;
-      }
-      if (this.bloomCanvasB.width !== bloomW2 || this.bloomCanvasB.height !== bloomH2) {
-        this.bloomCanvasB.width = bloomW2;
-        this.bloomCanvasB.height = bloomH2;
+      if (this.bloomCanvas.width !== bloomW || this.bloomCanvas.height !== bloomH) {
+        this.bloomCanvas.width = bloomW;
+        this.bloomCanvas.height = bloomH;
       }
 
-      this.bloomCtxA.clearRect(0, 0, bloomW1, bloomH1);
-      this.bloomCtxA.imageSmoothingEnabled = true;
-      this.bloomCtxA.drawImage(this.dotsCanvas, 0, 0, bloomW1, bloomH1);
-
-      this.bloomCtxB.clearRect(0, 0, bloomW2, bloomH2);
-      this.bloomCtxB.imageSmoothingEnabled = true;
-      this.bloomCtxB.drawImage(this.bloomCanvasA, 0, 0, bloomW2, bloomH2);
-
-      this.bloomCtxA.clearRect(0, 0, bloomW1, bloomH1);
-      this.bloomCtxA.drawImage(this.bloomCanvasB, 0, 0, bloomW1, bloomH1);
+      this.bloomCtx.clearRect(0, 0, bloomW, bloomH);
+      this.bloomCtx.imageSmoothingEnabled = true;
+      this.bloomCtx.drawImage(this.dotsCanvas, 0, 0, bloomW, bloomH);
 
       ctx.save();
       ctx.globalCompositeOperation = 'screen';
       ctx.globalAlpha = Math.min(
-        0.72,
-        (profile.bloomIntensity / 100) * 0.95 * dotsAlpha * (animated ? 0.88 + 0.24 * beatSwell + audioLevel * 0.16 : 1)
+        0.58,
+        (profile.bloomIntensity / 100) *
+          0.85 *
+          dotsAlpha *
+          (animated ? 0.88 + 0.2 * beatSwell + audioLevel * 0.14 : 1)
       );
-      ctx.drawImage(this.bloomCanvasA, 0, 0, width, height);
+      ctx.drawImage(this.bloomCanvas, 0, 0, width, height);
       ctx.restore();
     }
 
-    // 5b. Autonomous & interactive Ball-Lightning ASCII Globe roaming freely across the sky
+    // 5b. Autonomous & interactive ASCII Globe drifting calmly across the sky
     renderAsciiGlobeLayer(ctx, {
       width,
       height,
@@ -839,11 +800,10 @@ export class AsciiDotsRenderer {
     this.sampleCanvas.width = 0;
     this.blurCanvas.width = 0;
     this.dotsCanvas.width = 0;
-    this.bloomCanvasA.width = 0;
-    this.bloomCanvasB.width = 0;
-    this.buckets.clear();
-    this.colorLabels.clear();
-    this.glyphQueue.length = 0;
+    this.bloomCanvas.width = 0;
+    this.atlasCanvas.width = 0;
+    this.atlasKey = '';
+    this.cachedPixels = null;
     this.vignetteGradient = null;
   }
 }

@@ -124,8 +124,8 @@
     },
     {
       "file": "metro-entry-mobile.mp4",
-      "bytes": 3168458,
-      "sha256": "ebce1fee1d611966325372a7d13c06e453bec6df82ad3fa4678c49589ef27888",
+      "bytes": 2532277,
+      "sha256": "fdacdc704164625c509e6ce12c3064881ecc45a7c53e2773c365b520df13437f",
       "probe": {
         "programs": [],
         "stream_groups": [],
@@ -139,15 +139,15 @@
         ],
         "format": {
           "duration": "8.000000",
-          "size": "3168458"
+          "size": "2532277"
         }
       },
       "faststart": true
     },
     {
       "file": "metro-entry.mp4",
-      "bytes": 7055707,
-      "sha256": "42a7bc858d06b2d47ca723eea4f7b498b5623c3fe5479f85c8922330f0c03b4a",
+      "bytes": 5387731,
+      "sha256": "4897b8ed094fb4e56dc2d4707b059f4a35fb1b9d26a746f2d729b332eda34075",
       "probe": {
         "programs": [],
         "stream_groups": [],
@@ -161,7 +161,7 @@
         ],
         "format": {
           "duration": "8.000000",
-          "size": "7055707"
+          "size": "5387731"
         }
       },
       "faststart": true
