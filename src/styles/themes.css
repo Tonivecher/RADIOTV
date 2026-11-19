@@ -3867,3 +3867,68 @@ html[data-globe-drag='true'] body {
   user-select: none;
   -webkit-user-select: none;
 }
+
+/* ============================================================
+   IDLE SCREENSAVER MODE (3+ minutes of inactivity)
+   Hides all chrome, forms, controls, EQ, lounge, and chat,
+   leaving only the live background, station title, and waveform.
+   ============================================================ */
+.island-header-wrap,
+.hero-eyebrow-line,
+.hero-lead-copy,
+.hero-lamp-spotlight,
+.float-slot--hero-control-region,
+.waveform-topline,
+.waveform-whisper-row,
+.waveform-controls-deck,
+#dsp-stage,
+#lounge-stage,
+.radio-footer,
+.floating-mini-dock {
+  transition: opacity 0.85s cubic-bezier(0.22, 1, 0.36, 1),
+    filter 0.85s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.spatial-root[data-screensaver='true'] .island-header-wrap,
+.spatial-root[data-screensaver='true'] .hero-eyebrow-line,
+.spatial-root[data-screensaver='true'] .hero-lead-copy,
+.spatial-root[data-screensaver='true'] .hero-lamp-spotlight,
+.spatial-root[data-screensaver='true'] .hero-editorial-grid__left .auth-error-box,
+.spatial-root[data-screensaver='true'] .float-slot--hero-control-region,
+.spatial-root[data-screensaver='true'] .waveform-topline,
+.spatial-root[data-screensaver='true'] .waveform-whisper-row,
+.spatial-root[data-screensaver='true'] .waveform-controls-deck,
+.spatial-root[data-screensaver='true'] #dsp-stage,
+.spatial-root[data-screensaver='true'] #lounge-stage,
+.spatial-root[data-screensaver='true'] .radio-footer,
+.spatial-root[data-screensaver='true'] .floating-mini-dock {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+.spatial-root[data-screensaver='true'] .waveform-shell {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.spatial-root[data-screensaver='true'] .waveform-stage {
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .island-header-wrap,
+  .hero-eyebrow-line,
+  .hero-lead-copy,
+  .hero-lamp-spotlight,
+  .float-slot--hero-control-region,
+  .waveform-topline,
+  .waveform-whisper-row,
+  .waveform-controls-deck,
+  #dsp-stage,
+  #lounge-stage,
+  .radio-footer,
+  .floating-mini-dock {
+    transition: opacity 0.16s ease;
+  }
+}

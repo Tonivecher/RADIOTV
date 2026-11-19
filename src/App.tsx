@@ -31,6 +31,7 @@ import { resolveThemeForChannel } from './constants/ascii';
 import { CHANNEL_COPY, REACTION_TO_ICON } from './constants/radio';
 import { useAudioTransport } from './hooks/useAudioTransport';
 import { useDspController } from './hooks/useDspController';
+import { useIdleScreensaver } from './hooks/useIdleScreensaver';
 import { useLiveRadioState } from './hooks/useLiveRadioState';
 import { useMediaSession } from './hooks/useMediaSession';
 import { useRadioSession } from './hooks/useRadioSession';
@@ -89,6 +90,9 @@ export const App: React.FC = () => {
   broadcastSyncedRef.current = transport.onBroadcastSynced;
 
   const theme = resolveThemeForChannel(radioLive.channelId);
+  const isScreensaver = useIdleScreensaver({
+    enabled: !showBootloader && !radioSession.authModalOpen,
+  });
 
   // Keep reactive audio telemetry synced for background ASCII, waveform & dot matrix
   useEffect(() => {
@@ -299,6 +303,8 @@ export const App: React.FC = () => {
       return false;
     }
     const audio = transport.audioRef.current;
+    // Wake background video inside the user gesture (important for iOS Low Power Mode).
+    backgroundRef.current?.prepare();
     if (!autoPlay && audio) {
       audio.pause();
       audio.muted = false;
@@ -323,7 +329,10 @@ export const App: React.FC = () => {
   return (
     <MotionConfig reducedMotion="user">
       <SpatialMotionProvider>
-        <div className={`spatial-root theme-${theme}`}>
+        <div
+          className={`spatial-root theme-${theme}`}
+          data-screensaver={isScreensaver ? 'true' : undefined}
+        >
           <EveningBackground
             ref={backgroundRef}
             channelId={radioLive.channelId}
