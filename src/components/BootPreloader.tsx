@@ -55,6 +55,12 @@ export function BootPreloader({
     let active = true;
     setFontsReady(false);
     setFontError('');
+    // Never deadlock mobile Safari if a font face load stalls: allow entry after 3.5s grace.
+    const fallbackTimer = window.setTimeout(() => {
+      if (active) {
+        setFontsReady(true);
+      }
+    }, 3500);
     const timer = window.setTimeout(() => {
       if (active) {
         setFontError('Шрифты загружаются слишком долго. Попробуйте ещё раз.');
@@ -141,6 +147,7 @@ export function BootPreloader({
           setFontError('Не удалось загрузить шрифты. Проверьте соединение и повторите.');
         }
       } finally {
+        window.clearTimeout(fallbackTimer);
         window.clearTimeout(timer);
       }
     };
@@ -148,6 +155,7 @@ export function BootPreloader({
     void load();
     return () => {
       active = false;
+      window.clearTimeout(fallbackTimer);
       window.clearTimeout(timer);
     };
   }, [fontRetry]);
@@ -282,7 +290,8 @@ export function BootPreloader({
     <MetroHero
       className={`moscow-intro moscow-intro--${phase}`}
       title="ВАГОН 4:20"
-      scrollHint={ready ? 'СКРОЛЛ' : `ЗАГРУЗКА ${loadPct}%`}
+      scrollHint={ready ? 'ПРОКРУТИ ВНИЗ' : `ЗАГРУЗКА ${loadPct}%`}
+      scrollSubHint={ready ? 'Листай вниз, чтобы открыть двери' : 'Подтягиваем вагон и эфир'}
       tagline="Твоя остановка. Двери открыты."
       canUnlock={ready}
       fastForward={phase === 'opening'}

@@ -253,25 +253,25 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
       let frame = 0;
       let confirmed = false;
 
-      const confirm = () => {
-        if (!active || confirmed || video.readyState < 2 || !video.videoWidth) {
+      const confirm = (allowPosterFallback = false) => {
+        if (!active || confirmed) {
+          return;
+        }
+        const hasVideo = video.readyState >= 2 && video.videoWidth > 0;
+        if (!hasVideo && !allowPosterFallback) {
           return;
         }
         confirmed = true;
-        if (!paused) {
+        if (!paused && hasVideo) {
           setVideoReady(true);
         }
         ready();
       };
 
       const loaded = () => {
-        if (paused) {
-          confirm();
-        } else if (video.requestVideoFrameCallback) {
-          frame = video.requestVideoFrameCallback(confirm);
-        } else {
-          confirm();
-        }
+        // Confirm immediately on HAVE_CURRENT_DATA instead of waiting for requestVideoFrameCallback
+        // (iOS Safari Low Power Mode & hidden-under-preloader video can never emit rVFC until gesture).
+        confirm(false);
       };
 
       const syncVisibility = () => {
@@ -283,12 +283,19 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
       };
 
       video.addEventListener('loadeddata', loaded);
+      video.addEventListener('canplay', loaded);
       document.addEventListener('visibilitychange', syncVisibility);
+      // Graceful mobile fallback: if iOS/Android defers video decode until user tap, unblock boot with poster.
+      const fallbackTimer = window.setTimeout(() => {
+        if (!confirmed && posterImgRef.current) {
+          confirm(true);
+        }
+      }, 2200);
       const timer = window.setTimeout(() => {
         if (!confirmed) {
-          fail('Не удалось подготовить видео. Нажмите «Подготовить» или повторите загрузку.');
+          confirm(true);
         }
-      }, 15000);
+      }, 6000);
 
       if (video.readyState >= 2) {
         loaded();
@@ -301,11 +308,13 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
 
       return () => {
         active = false;
+        window.clearTimeout(fallbackTimer);
         window.clearTimeout(timer);
         if (frame && video.cancelVideoFrameCallback) {
           video.cancelVideoFrameCallback(frame);
         }
         video.removeEventListener('loadeddata', loaded);
+        video.removeEventListener('canplay', loaded);
         document.removeEventListener('visibilitychange', syncVisibility);
       };
     }, [blobUrl, reducedMotion, paused]);

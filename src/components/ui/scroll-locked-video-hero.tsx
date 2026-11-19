@@ -6,6 +6,7 @@ export interface MetroHeroProps {
   posterSrc?: string;
   title?: string;
   scrollHint?: string;
+  scrollSubHint?: string;
   tagline?: string;
   signature?: { name: string; url: string } | false;
   /** Total input distance (px) needed to scrub the full video. */
@@ -45,12 +46,13 @@ export default function MetroHero({
   mobileVideoSrc = DEFAULT_MOBILE_VIDEO,
   posterSrc = DEFAULT_POSTER,
   title = 'ВАГОН 4:20',
-  scrollHint = 'СКРОЛЛ',
+  scrollHint = 'ПРОКРУТИ ВНИЗ',
+  scrollSubHint = 'Листай вниз, чтобы открыть двери',
   tagline = 'Твоя остановка. Двери открыты.',
   signature = DEFAULT_SIGNATURE,
-  scrubDistance = 2400,
-  touchScrubDistance = 1100,
-  unlockAfterEndPx = 520,
+  scrubDistance = 2100,
+  touchScrubDistance = 950,
+  unlockAfterEndPx = 220,
   canUnlock = true,
   fastForward = false,
   onUnlock,
@@ -74,6 +76,7 @@ export default function MetroHero({
       : videoSrc
   );
   const [blobUrl, setBlobUrl] = useState('');
+  const [blobFailed, setBlobFailed] = useState(false);
 
   const canUnlockRef = useRef(canUnlock);
   canUnlockRef.current = canUnlock;
@@ -82,10 +85,11 @@ export default function MetroHero({
   const onUnlockRef = useRef(onUnlock);
   onUnlockRef.current = onUnlock;
 
-  // Preload the all-intra MP4 into a memory Blob so frame-by-frame seeking is 100% RAM-backed (0ms network latency).
+  // Preload the MP4 once into a RAM Blob (0ms seek latency) without triggering a duplicate <video src> download.
   useEffect(() => {
     const controller = new AbortController();
     let objectUrl = '';
+    setBlobFailed(false);
     fetch(sourceUrl, { signal: controller.signal })
       .then((res) => (res.ok ? res.blob() : Promise.reject(new Error('Fetch failed'))))
       .then((blob) => {
@@ -94,7 +98,9 @@ export default function MetroHero({
         setBlobUrl(objectUrl);
       })
       .catch(() => {
-        // Fallback to direct HTTP 206 range-enabled sourceUrl
+        if (!controller.signal.aborted) {
+          setBlobFailed(true);
+        }
       });
 
     return () => {
@@ -308,7 +314,10 @@ export default function MetroHero({
         titleRef.current.style.transform = `translate3d(0, ${((1 - t) * -22).toFixed(1)}px, 0) scale(${(0.96 + t * 0.04).toFixed(4)})`;
       }
       if (hintRef.current) {
-        hintRef.current.style.opacity = hasStartedScrolling ? '0' : '1';
+        const hintOpacity = hasStartedScrolling
+          ? 1 - clamp(currentProgress / 0.16, 0, 1)
+          : 1;
+        hintRef.current.style.opacity = hintOpacity.toFixed(3);
       }
       if (taglineRef.current) {
         const t = clamp((currentProgress - 0.82) / 0.18, 0, 1);
@@ -365,7 +374,7 @@ export default function MetroHero({
     >
       <video
         ref={videoRef}
-        src={blobUrl || sourceUrl}
+        src={blobUrl || (blobFailed ? sourceUrl : undefined)}
         poster={posterSrc}
         muted
         playsInline
@@ -460,39 +469,26 @@ export default function MetroHero({
 
       <div
         ref={hintRef}
+        className="moscow-intro__scroll-cue"
         style={{
-          position: 'absolute',
-          left: '50%',
-          bottom: 'clamp(20px, 6vh, 48px)',
-          transform: 'translateX(-50%)',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: 8,
-          color: 'rgba(239, 227, 210, 0.78)',
           fontFamily: SANS,
-          fontSize: 'clamp(10px, 1.4vw, 12px)',
-          fontWeight: 600,
-          letterSpacing: '0.3em',
-          transition: 'opacity 0.4s ease',
-          pointerEvents: 'none',
         }}
       >
-        <span>{scrollHint}</span>
+        <div className="moscow-intro__scroll-pill">
+          <span className="moscow-intro__scroll-title">{scrollHint}</span>
+          {scrollSubHint && (
+            <span className="moscow-intro__scroll-sub">{scrollSubHint}</span>
+          )}
+        </div>
         <svg
-          width="14"
-          height="18"
-          viewBox="0 0 14 18"
-          style={{ animation: 'metro-hero-bounce 1.6s ease-in-out infinite' }}
+          width="18"
+          height="24"
+          viewBox="0 0 18 24"
+          className="moscow-intro__scroll-arrow"
+          aria-hidden="true"
         >
-          <style>{`
-            @keyframes metro-hero-bounce {
-              0%, 100% { transform: translateY(0); opacity: 0.5; }
-              50% { transform: translateY(5px); opacity: 1; }
-            }
-          `}</style>
           <path
-            d="M7 1 L7 17 M2 12 L7 17 L12 12"
+            d="M9 2 L9 18 M3.5 13 L9 18.5 L14.5 13 M5.5 18.5 L9 22 L12.5 18.5"
             stroke="currentColor"
             strokeWidth="1.5"
             fill="none"

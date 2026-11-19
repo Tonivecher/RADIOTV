@@ -259,7 +259,7 @@ export function useAudioTransport({
         await Promise.race([
           played,
           new Promise<never>((_, reject) => {
-            playTimeout = window.setTimeout(() => reject(new Error('Playback timed out')), 8000);
+            playTimeout = window.setTimeout(() => reject(new Error('Playback timed out')), 12000);
           }),
         ]);
       } catch (err) {
@@ -879,8 +879,8 @@ export function useAudioTransport({
     };
   }, [channelIdRef, fetchInFlightRef, fetchRadioState, getActiveAudio]);
 
-  // Metadata is insufficient: seek to the actual broadcast point, then require decoded,
-  // buffered data around that point. A stalled resource stays blocked until recovery.
+  // Warm up audio metadata/buffer on desktop, while never blocking mobile browsers (iOS Safari /
+  // Android Chrome defer <audio> preloading until a user gesture, which previously stalled boot at 67%).
   useEffect(() => {
     const audio = audioRef.current;
     setIsAudioReady(false);
@@ -894,6 +894,21 @@ export function useAudioTransport({
     let lastSeekAt = 0;
     let lastPrepareAt = 0;
     const expected = new URL(audioSource, window.location.href).href;
+    const isMobileBrowser =
+      window.matchMedia('(pointer: coarse)').matches ||
+      /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    // Mobile browsers suspend <audio> preload until tap/scroll; allow instant entry once stream URL is live.
+    const gestureDeferGraceMs = isMobileBrowser ? 550 : 2400;
+
+    const markReady = () => {
+      if (!ready) {
+        ready = true;
+        setIsAudioReady(true);
+        setAudioError('');
+        setNeedsGesture(false);
+      }
+      waitingSince = Date.now();
+    };
 
     const check = () => {
       if (!active) {
@@ -908,10 +923,22 @@ export function useAudioTransport({
         waitingSince = Date.now();
         return;
       }
-      if (!ready && Date.now() - waitingSince > 20000) {
-        setAudioError('Звук загружается слишком долго. Нажмите «Подготовить» или повторите загрузку.');
-        setNeedsGesture(true);
+      if (audio.error) {
+        return;
       }
+
+      // On mobile (or when autoplay/preload is deferred by the browser), do not lock the preloader at 67%.
+      // The actual audio stream starts cleanly inside the user's tap/scroll gesture in startPlayback().
+      if (
+        bootVisibleRef.current &&
+        !ready &&
+        (audio.readyState >= HTMLMediaElement.HAVE_METADATA ||
+          Date.now() - waitingSince >= gestureDeferGraceMs)
+      ) {
+        markReady();
+        return;
+      }
+
       if (audio.currentSrc !== expected || !audioMetaLoadedRef.current) {
         return;
       }
@@ -929,7 +956,7 @@ export function useAudioTransport({
       }
 
       const point = bootVisibleRef.current || !ready ? target : audio.currentTime;
-      const reserve = audio.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA ? 1 : 3;
+      const reserve = audio.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA ? 1 : 2;
       let buffered = false;
       for (let i = 0; i < audio.buffered.length; i++) {
         if (
@@ -948,19 +975,10 @@ export function useAudioTransport({
         (!(bootVisibleRef.current || !ready) || Math.abs(audio.currentTime - target) <= 1.2);
 
       if (next) {
-        if (!ready) {
-          ready = true;
-          setIsAudioReady(true);
-          setAudioError('');
-          setNeedsGesture(false);
-        }
-        waitingSince = Date.now();
+        markReady();
       } else {
-        if (ready) {
-          ready = false;
-          setIsAudioReady(false);
-        }
         if (
+          !isMobileBrowser &&
           bootVisibleRef.current &&
           audio.paused &&
           !audio.seeking &&
@@ -969,19 +987,15 @@ export function useAudioTransport({
           lastPrepareAt = Date.now();
           audio.muted = true;
           void audio.play().catch(() => {
-            if (active) {
-              setNeedsGesture(true);
+            if (active && !ready) {
+              markReady();
             }
           });
-        }
-        if (Date.now() - waitingSince > 20000) {
-          setAudioError('Звук загружается слишком долго. Нажмите «Подготовить» или повторите загрузку.');
-          setNeedsGesture(true);
         }
       }
     };
 
-    const events = ['canplay', 'progress', 'seeked', 'loadeddata', 'waiting', 'stalled'] as const;
+    const events = ['loadedmetadata', 'canplay', 'progress', 'seeked', 'loadeddata', 'waiting', 'stalled'] as const;
     events.forEach((name) => audio.addEventListener(name, check));
     const interval = window.setInterval(check, 250);
     check();
