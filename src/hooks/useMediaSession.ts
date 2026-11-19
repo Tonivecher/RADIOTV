@@ -128,11 +128,18 @@ export function useMediaSession({
       return;
     }
     const duration = radioState.broadcast.durationSec;
+    if (!Number.isFinite(duration) || duration <= 0) {
+      return;
+    }
+    const position = Math.max(0, Math.min(duration, liveClock.getTargetSec()));
+    if (!Number.isFinite(position)) {
+      return;
+    }
     try {
       navigator.mediaSession.setPositionState({
         duration,
         playbackRate: 1,
-        position: Math.max(0, Math.min(duration, liveClock.getTargetSec())),
+        position,
       });
     } catch {
       // position outside duration or unsupported

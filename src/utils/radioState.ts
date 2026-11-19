@@ -24,11 +24,19 @@ interface ParsedRadioState {
 }
 
 export function buildMediaArtwork(): MediaImage[] {
-  return MEDIA_ARTWORK_SIZES.map((size) => ({
-    src: new URL(`/brand/icon-${size}.png`, window.location.origin).href,
-    sizes: `${size}x${size}`,
-    type: 'image/png',
-  }));
+  const origin = window.location.origin;
+  return [
+    {
+      src: new URL('/brand/apple-touch-icon.png', origin).href,
+      sizes: '180x180',
+      type: 'image/png',
+    },
+    ...MEDIA_ARTWORK_SIZES.map((size) => ({
+      src: new URL(`/brand/icon-${size}.png`, origin).href,
+      sizes: `${size}x${size}`,
+      type: 'image/png',
+    })),
+  ];
 }
 
 export function describeSync(

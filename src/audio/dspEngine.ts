@@ -115,7 +115,7 @@ function buildWarmthCurve(amount: number): Float32Array<ArrayBuffer> {
   return curve;
 }
 
-type EngineEvent = 'running' | 'blocked';
+type EngineEvent = 'running' | 'blocked' | 'background-suspended';
 
 /** Fade applied to the output bus when audio starts or the context wakes up (hides the first-sample click). */
 const UNLOCK_FADE_SEC = 1.5;
@@ -380,14 +380,22 @@ class RadioDspEngine {
       this.emit('running');
       return;
     }
+    // While screen is locked or tab is hidden on iOS, WebKit suspends/interrupts AudioContext.
+    // Never emit 'blocked' (which would pause UI/MediaSession); notify transport to keep native audio alive.
+    if (document.visibilityState === 'hidden') {
+      if (this.playbackIntent) {
+        this.emit('background-suspended');
+      }
+      return;
+    }
     // A call or Siri owns an interrupted session. Let the system release it first.
     if (state === 'interrupted' || this.isSessionInterrupted()) {
       if (this.playbackIntent) this.emit('blocked');
       return;
     }
     if (this.playbackIntent && state === 'suspended') {
-      void this.resume(true).then((ok) => {
-        if (!ok) this.emit('blocked');
+      void this.resume(false).then((ok) => {
+        if (!ok && document.visibilityState !== 'hidden') this.emit('blocked');
       });
     }
   };
@@ -396,7 +404,7 @@ class RadioDspEngine {
     this.listeners.forEach((cb) => cb(event));
   }
 
-  /** Subscribe to 'running' / 'blocked' notifications. Returns an unsubscribe function. */
+  /** Subscribe to 'running' / 'blocked' / 'background-suspended' notifications. Returns an unsubscribe function. */
   public subscribe(cb: (event: EngineEvent) => void): () => void {
     this.listeners.add(cb);
     return () => {
@@ -414,11 +422,19 @@ class RadioDspEngine {
     return !!this.ctx && (this.ctx.state as string) === 'running';
   }
 
+  public hasContext(): boolean {
+    return this.ctx !== null;
+  }
+
+  public isAttachedTo(audioEl: HTMLAudioElement | null): boolean {
+    return Boolean(audioEl && this.connectedAudioEl === audioEl && this.sourceNode);
+  }
+
   /**
-   * Request the platform's playback category. Background policy remains the browser's decision.
+   * Request the platform's playback category before starting audio (iOS Safari AudioSession API).
    * Feature detection keeps older browsers usable without a fake permission prompt.
    */
-  private requestPlaybackAudioSession(): void {
+  public requestPlaybackAudioSession(): void {
     try {
       const session = (navigator as unknown as { audioSession?: { type: string } }).audioSession;
       if (session) session.type = 'playback';
@@ -431,8 +447,22 @@ class RadioDspEngine {
     return (navigator as unknown as { audioSession?: { state?: string } }).audioSession?.state === 'interrupted';
   }
 
+  public setUnityGain(): void {
+    if (!this.ctx || !this.fadeGainNode) return;
+    ++this.fadeRevision;
+    const g = this.fadeGainNode.gain;
+    const t = this.ctx.currentTime;
+    g.cancelScheduledValues(t);
+    g.setValueAtTime(1, t);
+  }
+
   private scheduleFadeIn(durationSec = UNLOCK_FADE_SEC): void {
     if (!this.ctx || !this.fadeGainNode) return;
+    // Never zero output gain while page is hidden/locked: throttled/frozen iOS timers can trap gain at 0.
+    if (document.visibilityState === 'hidden') {
+      this.setUnityGain();
+      return;
+    }
     ++this.fadeRevision;
     const g = this.fadeGainNode.gain;
     // While the context is suspended currentTime is frozen, so this ramp starts the instant it wakes up.
@@ -453,7 +483,15 @@ class RadioDspEngine {
     if (this.isSessionInterrupted()) return Promise.resolve(false);
     if (this.playbackIntent) this.requestPlaybackAudioSession();
     const running = (ctx.state as string) === 'running';
-    if (withFadeIn || !running) this.scheduleFadeIn();
+    if (document.visibilityState === 'hidden') {
+      // Never ramp from 0 in the background.
+      this.setUnityGain();
+      if (running) return Promise.resolve(true);
+    } else if (withFadeIn || !running) {
+      this.scheduleFadeIn();
+    } else {
+      this.setUnityGain();
+    }
     if (running) return Promise.resolve(true);
 
     const wake = ctx

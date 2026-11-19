@@ -940,14 +940,86 @@ async function handleStaticFile(req, res, pathname) {
     return false;
   }
 
-  const content = await fs.promises.readFile(resolved);
+  let stat;
+  try {
+    stat = await fs.promises.stat(resolved);
+  } catch {
+    return false;
+  }
+
+  const total = stat.size;
   const ext = path.extname(resolved).toLowerCase();
+  const contentType = STATIC_MIME_TYPES[ext] || 'application/octet-stream';
+  const cacheControl =
+    ext === '.html'
+      ? 'no-cache, no-store, must-revalidate'
+      : pathname.startsWith('/assets/')
+        ? 'public, max-age=31536000, immutable'
+        : 'public, max-age=3600';
+
   setCorsHeaders(res);
+
+  const rangeHeader = req.headers.range;
+  if (rangeHeader && total > 0) {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(String(rangeHeader).trim());
+    if (!match) {
+      res.writeHead(416, { 'Content-Range': `bytes */${total}` });
+      res.end();
+      return true;
+    }
+    const rawStart = match[1];
+    const rawEnd = match[2];
+    let start = rawStart ? Number.parseInt(rawStart, 10) : 0;
+    let end = rawEnd ? Number.parseInt(rawEnd, 10) : total - 1;
+    if (!rawStart && rawEnd) {
+      const suffixLen = Number.parseInt(rawEnd, 10);
+      start = Math.max(0, total - suffixLen);
+      end = total - 1;
+    }
+    if (
+      !Number.isFinite(start) ||
+      !Number.isFinite(end) ||
+      start < 0 ||
+      end < start ||
+      start >= total
+    ) {
+      res.writeHead(416, { 'Content-Range': `bytes */${total}` });
+      res.end();
+      return true;
+    }
+    end = Math.min(end, total - 1);
+    const chunkSize = end - start + 1;
+
+    res.writeHead(206, {
+      'Content-Type': contentType,
+      'Content-Range': `bytes ${start}-${end}/${total}`,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': chunkSize,
+      'Cache-Control': cacheControl,
+    });
+    if (req.method === 'HEAD') {
+      res.end();
+      return true;
+    }
+    const stream = fs.createReadStream(resolved, { start, end });
+    stream.on('error', () => res.destroy());
+    stream.pipe(res);
+    return true;
+  }
+
   res.writeHead(200, {
-    'Content-Type': STATIC_MIME_TYPES[ext] || 'application/octet-stream',
-    'Content-Length': content.length,
+    'Content-Type': contentType,
+    'Content-Length': total,
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': cacheControl,
   });
-  res.end(req.method === 'HEAD' ? undefined : content);
+  if (req.method === 'HEAD') {
+    res.end();
+    return true;
+  }
+  const stream = fs.createReadStream(resolved);
+  stream.on('error', () => res.destroy());
+  stream.pipe(res);
   return true;
 }
 

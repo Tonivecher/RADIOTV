@@ -22,6 +22,36 @@ interface UseAudioTransportParams {
   bootVisibleRef: RefObject<boolean>;
 }
 
+type TransportMode = 'direct' | 'dsp';
+
+function gainToLinear(masterGain: number): number {
+  return Math.max(0, Math.min(1, Math.pow(Math.max(0, Math.min(100, masterGain)) / 100, 1.6)));
+}
+
+function waitForMetadata(audio: HTMLAudioElement, timeoutMs = 4500): Promise<boolean> {
+  if (audio.readyState >= HTMLMediaElement.HAVE_METADATA) {
+    return Promise.resolve(true);
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      audio.removeEventListener('loadedmetadata', onReady);
+      audio.removeEventListener('canplay', onReady);
+      audio.removeEventListener('error', onFail);
+      resolve(ok);
+    };
+    const onReady = () => finish(true);
+    const onFail = () => finish(false);
+    const timer = window.setTimeout(() => finish(audio.readyState >= 1), timeoutMs);
+    audio.addEventListener('loadedmetadata', onReady, { once: true });
+    audio.addEventListener('canplay', onReady, { once: true });
+    audio.addEventListener('error', onFail, { once: true });
+  });
+}
+
 export function useAudioTransport({
   channelId,
   channelIdRef,
@@ -40,7 +70,13 @@ export function useAudioTransport({
   enteredRef,
   bootVisibleRef,
 }: UseAudioTransportParams) {
+  // Primary clean native <audio> element: NEVER bound to createMediaElementSource so iOS AVPlayer
+  // keeps Lock Screen & background playback alive reliably.
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Dedicated DSP <audio> element: only attached to Web Audio AudioContext when DSP is enabled
+  // and the page is visible in the foreground.
+  const dspAudioRef = useRef<HTMLAudioElement | null>(null);
+
   const [streamRevision, setStreamRevision] = useState(0);
   const [needsGesture, setNeedsGesture] = useState(false);
   const [audioError, setAudioError] = useState('');
@@ -48,7 +84,10 @@ export function useAudioTransport({
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [syncSnapshot, setSyncSnapshot] = useState<SyncSnapshot>(IDLE_SYNC);
   const [audioBlocked, setAudioBlocked] = useState<boolean>(false);
+  const [dspMediaArmed, setDspMediaArmed] = useState<boolean>(false);
 
+  const activeModeRef = useRef<TransportMode>('direct');
+  const handingOffRef = useRef<boolean>(false);
   const phaseLockRef = useRef<LivePhaseLock | null>(null);
   const playIntentRef = useRef<boolean>(false);
   const transportEpochRef = useRef<number>(0);
@@ -65,15 +104,39 @@ export function useAudioTransport({
   const startPlaybackRef = useRef<() => Promise<boolean>>(async () => false);
   const reloadStreamRef = useRef<() => void>(() => {});
   const maybeResumeAfterLoadRef = useRef<() => void>(() => {});
+  const handoffToDirectRef = useRef<() => void>(() => {});
+  const handoffToDspRef = useRef<() => Promise<void>>(async () => {});
 
   const audioSource =
     isStateLoaded && stateChannelId === channelId && broadcastSetId
       ? `/api/radio/stream/${channelId}?set=${encodeURIComponent(String(broadcastSetId))}&load=${streamRevision}`
       : undefined;
 
+  const dspAudioSource = !isDspBypassed || dspMediaArmed ? audioSource : undefined;
+
+  const getActiveAudio = useCallback((): HTMLAudioElement | null => {
+    if (activeModeRef.current === 'dsp' && dspAudioRef.current) {
+      return dspAudioRef.current;
+    }
+    return audioRef.current;
+  }, []);
+
+  // Configure iOS AudioSession playback category as early as possible.
+  useEffect(() => {
+    radioDsp.requestPlaybackAudioSession();
+  }, []);
+
+  // Sync direct <audio> volume whenever masterGain changes.
+  useEffect(() => {
+    const direct = audioRef.current;
+    if (direct) {
+      direct.volume = gainToLinear(macros.masterGain);
+    }
+  }, [macros.masterGain]);
+
   useEffect(() => {
     const lock = new LivePhaseLock({
-      getAudio: () => audioRef.current,
+      getAudio: () => getActiveAudio(),
       getTargetSec: () => liveClock.getTargetSec(),
       getDurationSec: () => durationRef.current,
       onChange: setSyncSnapshot,
@@ -84,7 +147,7 @@ export function useAudioTransport({
       lock.stop();
       phaseLockRef.current = null;
     };
-  }, [liveClock, durationRef]);
+  }, [liveClock, durationRef, getActiveAudio]);
 
   useEffect(() => {
     return () => {
@@ -94,31 +157,33 @@ export function useAudioTransport({
     };
   }, []);
 
+  const syncElementToLiveClock = useCallback(
+    (audio: HTMLAudioElement | null) => {
+      if (!audio) return;
+      if (!liveClock.hasEstimate() || anchorChannelRef.current !== channelIdRef.current) {
+        return;
+      }
+      const mediaDuration =
+        Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : Infinity;
+      const limit = Math.min(durationRef.current, mediaDuration) - 0.5;
+      try {
+        audio.currentTime = Math.max(0, Math.min(liveClock.getTargetSec(), limit));
+      } catch {
+        // metadata not ready; phase lock will align once playing
+      }
+    },
+    [liveClock, anchorChannelRef, channelIdRef, durationRef]
+  );
+
   const syncAudioToLiveClock = useCallback(() => {
-    const audio = audioRef.current;
-    if (!audio) {
-      return;
-    }
-    // No server fix yet, or the fix belongs to another channel: seeking now would land in the wrong place.
-    if (!liveClock.hasEstimate() || anchorChannelRef.current !== channelIdRef.current) {
-      return;
-    }
-    const mediaDuration =
-      Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : Infinity;
-    const limit = Math.min(durationRef.current, mediaDuration) - 0.5;
-    try {
-      audio.currentTime = Math.max(0, Math.min(liveClock.getTargetSec(), limit));
-    } catch {
-      // metadata not ready; the phase lock will correct once playback starts
-    }
-  }, [liveClock, anchorChannelRef, channelIdRef, durationRef]);
+    syncElementToLiveClock(getActiveAudio());
+  }, [getActiveAudio, syncElementToLiveClock]);
 
   const startPlayback = useCallback((): Promise<boolean> => {
-    const audio = audioRef.current;
-    if (!audio || !enteredRef.current) {
+    const direct = audioRef.current;
+    if (!direct || !enteredRef.current) {
       return Promise.resolve(false);
     }
-    // A gesture handler and a button onClick can both fire for one tap: share one attempt.
     if (playInFlightRef.current) {
       return playInFlightRef.current;
     }
@@ -130,27 +195,67 @@ export function useAudioTransport({
       }
       const epoch = ++transportEpochRef.current;
       playIntentRef.current = true;
-      radioDsp.setPlaybackIntent(true);
-      if (!radioDsp.initAndAttach(audio)) {
-        playIntentRef.current = false;
-        radioDsp.setPlaybackIntent(false);
-        setAudioBlocked(true);
-        return false;
-      }
+      radioDsp.requestPlaybackAudioSession();
 
       const dsp = dspStateRef.current;
-      radioDsp.setBands(dsp.bands);
-      radioDsp.setMacros(dsp.macros);
-      radioDsp.setBypass(dsp.isDspBypassed);
+      const wantDsp =
+        !dsp.isDspBypassed &&
+        document.visibilityState !== 'hidden' &&
+        Boolean(dspAudioRef.current) &&
+        Boolean(audioSource);
 
-      // iOS: resume() and play() must both be issued synchronously inside the gesture task.
-      const contextReady = radioDsp.resume(true);
-      audio.muted = false;
-      syncAudioToLiveClock();
+      const dspAudio = dspAudioRef.current;
+      let mode: TransportMode = wantDsp ? 'dsp' : 'direct';
+      let targetAudio: HTMLAudioElement = direct;
+      let contextReady: Promise<boolean> = Promise.resolve(true);
+
+      if (mode === 'dsp' && dspAudio) {
+        setDspMediaArmed(true);
+        if (!dspAudio.src && audioSource) {
+          dspAudio.src = audioSource;
+        }
+        radioDsp.setPlaybackIntent(true);
+        if (radioDsp.initAndAttach(dspAudio)) {
+          radioDsp.setBands(dsp.bands);
+          radioDsp.setMacros(dsp.macros);
+          radioDsp.setBypass(false);
+          contextReady = radioDsp.resume(true);
+          targetAudio = dspAudio;
+          dspAudio.muted = false;
+          dspAudio.volume = 1;
+        } else {
+          // Fallback to clean native <audio> if Web Audio graph is unavailable.
+          mode = 'direct';
+          targetAudio = direct;
+          radioDsp.setPlaybackIntent(false);
+        }
+      } else {
+        radioDsp.setPlaybackIntent(false);
+      }
+
+      if (mode === 'direct') {
+        direct.muted = false;
+        direct.volume = gainToLinear(dsp.macros.masterGain);
+        if (dspAudio && !dspAudio.paused) {
+          handingOffRef.current = true;
+          dspAudio.pause();
+          handingOffRef.current = false;
+        }
+      } else {
+        // Keep clean direct <audio> paused while DSP plays in foreground.
+        if (!direct.paused) {
+          handingOffRef.current = true;
+          direct.pause();
+          handingOffRef.current = false;
+        }
+      }
+
+      activeModeRef.current = mode;
+      syncElementToLiveClock(targetAudio);
 
       let playTimeout: number | undefined;
       try {
-        const played = audio.play();
+        const played = targetAudio.play();
         await Promise.race([
           played,
           new Promise<never>((_, reject) => {
@@ -163,33 +268,58 @@ export function useAudioTransport({
         }
         const name = (err as { name?: string } | null)?.name;
         if (name === 'AbortError') {
-          // play() was cut short by load() or pause(). A pending reload re-issues it from loadedmetadata.
           return false;
         }
         if (name === 'NotAllowedError') {
-          // Autoplay policy: keep the intent so the next tap / click retries inside a real gesture.
           setIsPlaying(false);
           setAudioBlocked(true);
           return false;
         }
+        // If DSP element failed to start, fall back cleanly to direct native element.
+        if (mode === 'dsp' && direct) {
+          activeModeRef.current = 'direct';
+          radioDsp.setPlaybackIntent(false);
+          direct.muted = false;
+          direct.volume = gainToLinear(dsp.macros.masterGain);
+          syncElementToLiveClock(direct);
+          try {
+            await direct.play();
+            loadingRef.current = false;
+            setIsPlaying(true);
+            setAudioBlocked(false);
+            return true;
+          } catch {
+            // fall through to failure state
+          }
+        }
         playIntentRef.current = false;
         radioDsp.setPlaybackIntent(false);
         setIsPlaying(false);
-        audio.pause();
+        targetAudio.pause();
         return false;
       } finally {
         window.clearTimeout(playTimeout);
       }
 
-      const running = await contextReady;
-      if (epoch !== transportEpochRef.current || !playIntentRef.current || audio.paused) {
+      if (mode === 'dsp') {
+        const running = await contextReady;
+        if (epoch !== transportEpochRef.current || !playIntentRef.current || targetAudio.paused) {
+          return false;
+        }
+        if (!running) {
+          // If AudioContext couldn't unlock, seamlessly fall back to native <audio> so audio still works!
+          if (document.visibilityState === 'hidden') {
+            handoffToDirectRef.current();
+            return true;
+          }
+          setIsPlaying(false);
+          setAudioBlocked(true);
+          return false;
+        }
+      } else if (epoch !== transportEpochRef.current || !playIntentRef.current || targetAudio.paused) {
         return false;
       }
-      if (!running) {
-        setIsPlaying(false);
-        setAudioBlocked(true);
-        return false;
-      }
+
       loadingRef.current = false;
       setIsPlaying(true);
       setAudioBlocked(false);
@@ -203,10 +333,187 @@ export function useAudioTransport({
     });
     playInFlightRef.current = attempt;
     return attempt;
-  }, [enteredRef, syncAudioToLiveClock]);
+  }, [audioSource, enteredRef, syncElementToLiveClock]);
+
+  /**
+   * Seamless handoff from Web Audio DSP element -> clean native <audio> element.
+   * Called when user turns DSP off OR when iPhone screen locks (visibilitychange -> hidden).
+   */
+  const handoffToDirect = useCallback(() => {
+    const direct = audioRef.current;
+    const dspAudio = dspAudioRef.current;
+    if (!direct || activeModeRef.current === 'direct') {
+      return;
+    }
+
+    const wasPlaying = playIntentRef.current;
+    const fromTime =
+      dspAudio && Number.isFinite(dspAudio.currentTime) && dspAudio.currentTime > 0
+        ? dspAudio.currentTime
+        : liveClock.hasEstimate()
+          ? liveClock.getTargetSec()
+          : 0;
+
+    handingOffRef.current = true;
+    activeModeRef.current = 'direct';
+    radioDsp.setPlaybackIntent(false);
+
+    direct.muted = false;
+    direct.volume = gainToLinear(dspStateRef.current.macros.masterGain);
+    if (fromTime > 0 && direct.readyState >= 1) {
+      const limit =
+        Number.isFinite(direct.duration) && direct.duration > 1 ? direct.duration - 0.5 : fromTime;
+      try {
+        direct.currentTime = Math.max(0, Math.min(fromTime, limit));
+      } catch {
+        // ignore seek before ready
+      }
+    }
+
+    if (wasPlaying) {
+      radioDsp.requestPlaybackAudioSession();
+      void direct
+        .play()
+        .then(() => {
+          if (dspAudio && !dspAudio.paused) {
+            dspAudio.pause();
+          }
+          handingOffRef.current = false;
+          setAudioBlocked(false);
+          setIsPlaying(true);
+        })
+        .catch(() => {
+          if (dspAudio && !dspAudio.paused) {
+            dspAudio.pause();
+          }
+          handingOffRef.current = false;
+          if (document.visibilityState !== 'hidden') {
+            setAudioBlocked(true);
+            setIsPlaying(false);
+          }
+        });
+    } else {
+      if (dspAudio && !dspAudio.paused) {
+        dspAudio.pause();
+      }
+      handingOffRef.current = false;
+    }
+  }, [liveClock]);
+
+  /**
+   * Seamless handoff from clean native <audio> -> Web Audio DSP element (foreground only).
+   */
+  const handoffToDsp = useCallback(async () => {
+    const direct = audioRef.current;
+    const dspAudio = dspAudioRef.current;
+    if (
+      !direct ||
+      !dspAudio ||
+      !audioSource ||
+      document.visibilityState === 'hidden' ||
+      dspStateRef.current.isDspBypassed ||
+      activeModeRef.current === 'dsp' ||
+      !playIntentRef.current
+    ) {
+      return;
+    }
+
+    setDspMediaArmed(true);
+    const expectedHref = new URL(audioSource, window.location.href).href;
+    if (dspAudio.currentSrc !== expectedHref) {
+      dspAudio.src = audioSource;
+      dspAudio.load();
+    }
+
+    const ready = await waitForMetadata(dspAudio, 4500);
+    if (
+      !ready ||
+      !playIntentRef.current ||
+      dspStateRef.current.isDspBypassed ||
+      document.hidden
+    ) {
+      return;
+    }
+
+    const dsp = dspStateRef.current;
+    radioDsp.setPlaybackIntent(true);
+    if (!radioDsp.initAndAttach(dspAudio)) {
+      radioDsp.setPlaybackIntent(false);
+      return;
+    }
+    radioDsp.setBands(dsp.bands);
+    radioDsp.setMacros(dsp.macros);
+    radioDsp.setBypass(false);
+
+    const contextReady = radioDsp.resume(false);
+    dspAudio.muted = false;
+    dspAudio.volume = 1;
+
+    const targetTime =
+      Number.isFinite(direct.currentTime) && direct.currentTime > 0
+        ? direct.currentTime
+        : liveClock.getTargetSec();
+    const limit =
+      Number.isFinite(dspAudio.duration) && dspAudio.duration > 1
+        ? dspAudio.duration - 0.5
+        : targetTime;
+    try {
+      dspAudio.currentTime = Math.max(0, Math.min(targetTime, limit));
+    } catch {
+      // phase lock will align
+    }
+
+    handingOffRef.current = true;
+    try {
+      await dspAudio.play();
+      const running = await contextReady;
+      if (
+        !running ||
+        !playIntentRef.current ||
+        dspStateRef.current.isDspBypassed ||
+        document.hidden
+      ) {
+        dspAudio.pause();
+        handingOffRef.current = false;
+        return;
+      }
+      activeModeRef.current = 'dsp';
+      direct.pause();
+      setAudioBlocked(false);
+      setIsPlaying(true);
+    } catch {
+      // Keep clean native audio playing without interruption if DSP handoff fails.
+      dspAudio.pause();
+      activeModeRef.current = 'direct';
+      radioDsp.setPlaybackIntent(false);
+    } finally {
+      handingOffRef.current = false;
+    }
+  }, [audioSource, liveClock]);
+
+  handoffToDirectRef.current = handoffToDirect;
+  handoffToDspRef.current = handoffToDsp;
+
+  // React to live DSP Bypass toggle while playing in foreground.
+  useEffect(() => {
+    if (!playIntentRef.current || !enteredRef.current) {
+      if (isDspBypassed) {
+        activeModeRef.current = 'direct';
+      }
+      return;
+    }
+    if (isDspBypassed) {
+      if (activeModeRef.current === 'dsp') {
+        handoffToDirect();
+      }
+    } else if (document.visibilityState !== 'hidden' && activeModeRef.current === 'direct') {
+      void handoffToDsp();
+    }
+  }, [isDspBypassed, enteredRef, handoffToDirect, handoffToDsp]);
 
   const pausePlayback = useCallback(() => {
-    const audio = audioRef.current;
+    const direct = audioRef.current;
+    const dspAudio = dspAudioRef.current;
     const epoch = ++transportEpochRef.current;
     playIntentRef.current = false;
     resumeAfterLoadRef.current = false;
@@ -214,9 +521,6 @@ export function useAudioTransport({
     setIsPlaying(false);
     setAudioBlocked(false);
     phaseLockRef.current?.reset();
-    if (!audio) {
-      return;
-    }
 
     if (pauseTimerRef.current !== null) {
       window.clearTimeout(pauseTimerRef.current);
@@ -224,16 +528,19 @@ export function useAudioTransport({
     }
 
     // Background tabs get throttled timers (and may be frozen right after a lock-screen tap): pause at once.
-    if (document.visibilityState === 'hidden') {
-      audio.pause();
+    if (document.visibilityState === 'hidden' || activeModeRef.current === 'direct') {
+      direct?.pause();
+      dspAudio?.pause();
       return;
     }
-    // 15 ms fade-out first so the pause does not click; a new play() in between cancels the pause.
+
+    // 15 ms fade-out first for DSP path so the pause does not click; a new play() in between cancels the pause.
     radioDsp.fadeOut(15);
     pauseTimerRef.current = window.setTimeout(() => {
       pauseTimerRef.current = null;
       if (transportEpochRef.current === epoch) {
-        audio.pause();
+        direct?.pause();
+        dspAudio?.pause();
       }
     }, 20);
   }, []);
@@ -262,7 +569,6 @@ export function useAudioTransport({
       return;
     }
     if (anchorChannelRef.current !== channelIdRef.current) {
-      // wait for the new channel's state
       return;
     }
     resumeAfterLoadRef.current = false;
@@ -274,6 +580,11 @@ export function useAudioTransport({
     loadingRef.current = true;
     ++transportEpochRef.current;
     playInFlightRef.current = null;
+    handingOffRef.current = true;
+    if (dspAudioRef.current && !dspAudioRef.current.paused) {
+      dspAudioRef.current.pause();
+    }
+    handingOffRef.current = false;
     setIsPlaying(false);
     audioMetaLoadedRef.current = false;
     audioLoadedSetRef.current = null;
@@ -286,10 +597,8 @@ export function useAudioTransport({
   const onBroadcastSynced = useCallback((setKey: string) => {
     if (audioMetaLoadedRef.current) {
       if (audioLoadedSetRef.current === null) {
-        // Audio finished loading before we knew the set; it was requested after the switch, so it matches.
         audioLoadedSetRef.current = setKey;
       } else if (audioLoadedSetRef.current !== setKey) {
-        // The server rolled over to the next set: the element still holds the old file.
         reloadStreamRef.current();
         return;
       }
@@ -311,13 +620,13 @@ export function useAudioTransport({
 
   const handleResyncLive = useCallback(async () => {
     await fetchRadioState(channelIdRef.current);
-    const audio = audioRef.current;
-    if (audio && playIntentRef.current && !audio.paused) {
+    const active = getActiveAudio();
+    if (active && playIntentRef.current && !active.paused) {
       await phaseLockRef.current?.forceResync();
     } else {
       await startPlayback();
     }
-  }, [channelIdRef, fetchRadioState, startPlayback]);
+  }, [channelIdRef, fetchRadioState, getActiveAudio, startPlayback]);
 
   const forceResync = useCallback(() => {
     void phaseLockRef.current?.forceResync();
@@ -328,19 +637,24 @@ export function useAudioTransport({
     if (!audio || !audioSource) {
       return;
     }
-    // These calls stay in the gesture task; preparation is silent and does not grant entry.
+    radioDsp.requestPlaybackAudioSession();
     audio.muted = true;
     void audio.play().catch(() => setNeedsGesture(true));
   }, [audioSource]);
 
   const rollbackBootAudio = useCallback(() => {
-    const audio = audioRef.current;
+    const direct = audioRef.current;
+    const dspAudio = dspAudioRef.current;
     ++transportEpochRef.current;
     playIntentRef.current = false;
     radioDsp.setPlaybackIntent(false);
-    if (audio) {
-      audio.muted = true;
-      audio.pause();
+    if (direct) {
+      direct.muted = true;
+      direct.pause();
+    }
+    if (dspAudio) {
+      dspAudio.muted = true;
+      dspAudio.pause();
     }
   }, []);
 
@@ -358,33 +672,63 @@ export function useAudioTransport({
     syncAudioToLiveClock();
   }, [anchorChannelRef, channelIdRef, currentSetIdRef, syncAudioToLiveClock]);
 
-  const handleAudioPlay = useCallback(() => {
-    if (!enteredRef.current || (bootVisibleRef.current && !playIntentRef.current)) {
-      return;
-    }
-    if (playIntentRef.current) {
-      // started by us
-      return;
-    }
-    // Resumed by the system (headset button, interruption ended). Follow it, and ramp the bus back in
-    // because our own pause leaves the fade stage at silence.
-    playIntentRef.current = true;
-    radioDsp.setPlaybackIntent(true);
-    const epoch = transportEpochRef.current;
-    void radioDsp.resume(true).then((running) => {
-      if (epoch !== transportEpochRef.current || !playIntentRef.current || audioRef.current?.paused) {
+  const handleAudioPlay = useCallback(
+    (sourceMode: TransportMode = 'direct') => {
+      if (handingOffRef.current) {
         return;
       }
-      setIsPlaying(running);
-      setAudioBlocked(!running);
-    });
-  }, [bootVisibleRef, enteredRef]);
+      if (!enteredRef.current || (bootVisibleRef.current && !playIntentRef.current)) {
+        return;
+      }
+      if (sourceMode !== activeModeRef.current && playIntentRef.current) {
+        return;
+      }
+      if (playIntentRef.current) {
+        return;
+      }
+      // Resumed by the system (iOS Lock Screen play button, AirPods tap, interruption ended).
+      activeModeRef.current = sourceMode;
+      playIntentRef.current = true;
+      radioDsp.requestPlaybackAudioSession();
+      if (sourceMode === 'direct') {
+        const direct = audioRef.current;
+        if (direct) {
+          direct.muted = false;
+          direct.volume = gainToLinear(dspStateRef.current.macros.masterGain);
+        }
+        setAudioBlocked(false);
+        setIsPlaying(true);
+        return;
+      }
+      radioDsp.setPlaybackIntent(true);
+      const epoch = transportEpochRef.current;
+      void radioDsp.resume(document.visibilityState !== 'hidden').then((running) => {
+        if (
+          epoch !== transportEpochRef.current ||
+          !playIntentRef.current ||
+          dspAudioRef.current?.paused
+        ) {
+          return;
+        }
+        setIsPlaying(running);
+        setAudioBlocked(!running);
+      });
+    },
+    [bootVisibleRef, enteredRef]
+  );
 
-  const handleAudioPause = useCallback(() => {
-    if (loadingRef.current || audioRef.current?.ended || !playIntentRef.current) {
+  const handleAudioPause = useCallback((sourceMode: TransportMode = 'direct') => {
+    if (handingOffRef.current || loadingRef.current) {
       return;
     }
-    // A pause nobody asked for (phone call, headset unplugged, OS decision): reflect it honestly.
+    if (sourceMode !== activeModeRef.current) {
+      return;
+    }
+    const active = sourceMode === 'dsp' ? dspAudioRef.current : audioRef.current;
+    if (active?.ended || !playIntentRef.current) {
+      return;
+    }
+    // A pause nobody asked for (phone call, headset unplugged, lock-screen pause): reflect it honestly.
     ++transportEpochRef.current;
     playInFlightRef.current = null;
     resumeAfterLoadRef.current = false;
@@ -393,7 +737,13 @@ export function useAudioTransport({
     setIsPlaying(false);
   }, []);
 
-  const handleAudioError = useCallback(() => {
+  const handleAudioError = useCallback((sourceMode: TransportMode = 'direct') => {
+    if (sourceMode === 'dsp') {
+      if (activeModeRef.current === 'dsp' && playIntentRef.current) {
+        handoffToDirectRef.current();
+      }
+      return;
+    }
     setIsAudioReady(false);
     setAudioError('Не удалось загрузить звук. Проверьте соединение и повторите.');
     loadingRef.current = false;
@@ -405,74 +755,117 @@ export function useAudioTransport({
     }
   }, []);
 
-  const handleAudioEnded = useCallback(() => {
-    // The set finished; the server now serves the next one from the same URL, so the element must reload.
-    resumeAfterLoadRef.current = playIntentRef.current;
-    void fetchRadioState(channelIdRef.current).then(() => {
-      if (audioMetaLoadedRef.current) {
-        reloadStreamRef.current();
+  const handleAudioEnded = useCallback(
+    (sourceMode: TransportMode = 'direct') => {
+      if (sourceMode !== activeModeRef.current) {
+        return;
       }
-    });
-  }, [channelIdRef, fetchRadioState]);
+      // The set finished (foreground OR iPhone Lock Screen background): reload stream for next set.
+      resumeAfterLoadRef.current = playIntentRef.current;
+      if (document.visibilityState === 'hidden') {
+        activeModeRef.current = 'direct';
+      }
+      void fetchRadioState(channelIdRef.current).then(() => {
+        if (audioMetaLoadedRef.current) {
+          reloadStreamRef.current();
+        }
+      });
+    },
+    [channelIdRef, fetchRadioState]
+  );
 
-  // iOS / Android audio-policy resilience
+  // iOS / Android Web Audio policy resilience (only relevant when DSP mode is active).
   useEffect(() => {
     return radioDsp.subscribe((event) => {
+      if (activeModeRef.current !== 'dsp') {
+        return;
+      }
+      if (event === 'background-suspended') {
+        // Screen locked while DSP was active: seamlessly hand off to native <audio> without faking pause!
+        if (playIntentRef.current) {
+          handoffToDirectRef.current();
+        }
+        return;
+      }
       setAudioBlocked(event === 'blocked');
       if (event === 'blocked') {
-        setIsPlaying(false);
+        if (document.visibilityState === 'hidden' && playIntentRef.current) {
+          handoffToDirectRef.current();
+        } else {
+          setIsPlaying(false);
+        }
       } else if (
         enteredRef.current &&
         playIntentRef.current &&
-        audioRef.current &&
-        !audioRef.current.paused
+        dspAudioRef.current &&
+        !dspAudioRef.current.paused
       ) {
         setIsPlaying(true);
       }
     });
   }, [enteredRef]);
 
-  // Keep the audio session in playback mode; stop timer-driven corrections while hidden.
+  // Lock-screen & foreground lifecycle:
+  // - Going hidden: NEVER seek, NEVER zero fadeGainNode, NEVER call radioDsp.resume(fadeIn).
+  //   If DSP was active, immediately hand off to the clean native <audio> element!
+  // - Returning visible: re-anchor live clock, recover if OS paused playback, and restore DSP if enabled.
   useEffect(() => {
-    const keepAlive = () => {
+    const onEnterBackground = () => {
+      // Stop timer-driven rate nudges cleanly without touching currentTime.
       phaseLockRef.current?.checkNow();
-      if (playIntentRef.current) {
-        void radioDsp.resume(false);
+      if (playIntentRef.current && activeModeRef.current === 'dsp') {
+        handoffToDirectRef.current();
       }
     };
-    const recover = async () => {
-      const audio = audioRef.current;
-      if (!audio || !playIntentRef.current) {
+
+    const recoverForeground = async () => {
+      if (!playIntentRef.current) {
         return;
       }
-      // SSE ticks may have been missed in the background: re-anchor the live clock.
       if (!fetchInFlightRef.current) {
         void fetchRadioState(channelIdRef.current);
       }
-      if (audio.paused && !audio.ended && !loadingRef.current) {
+      const active = getActiveAudio();
+      if (!active) {
+        return;
+      }
+      if (active.paused && !active.ended && !loadingRef.current) {
         await startPlaybackRef.current();
+        return;
+      }
+      if (activeModeRef.current === 'direct') {
+        setAudioBlocked(false);
+        setIsPlaying(!active.paused);
+        phaseLockRef.current?.checkNow();
+        if (!dspStateRef.current.isDspBypassed) {
+          void handoffToDspRef.current();
+        }
       } else {
         const running = await radioDsp.resume(false);
         if (!playIntentRef.current) {
           return;
         }
-        setAudioBlocked(!running);
-        setIsPlaying(running && !audio.paused);
+        if (!running) {
+          handoffToDirectRef.current();
+          return;
+        }
+        setAudioBlocked(false);
+        setIsPlaying(!active.paused);
         phaseLockRef.current?.checkNow();
       }
     };
+
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') {
-        keepAlive();
+        onEnterBackground();
       } else {
-        void recover();
+        void recoverForeground();
       }
     };
-    const onPageHide = () => keepAlive();
+    const onPageHide = () => onEnterBackground();
     const onPageShow = (e: PageTransitionEvent) => {
       if (e.persisted) {
-        // restored from the back/forward cache
-        void recover();
+        void recoverForeground();
       }
     };
 
@@ -484,7 +877,7 @@ export function useAudioTransport({
       window.removeEventListener('pagehide', onPageHide);
       window.removeEventListener('pageshow', onPageShow);
     };
-  }, [channelIdRef, fetchInFlightRef, fetchRadioState]);
+  }, [channelIdRef, fetchInFlightRef, fetchRadioState, getActiveAudio]);
 
   // Metadata is insufficient: seek to the actual broadcast point, then require decoded,
   // buffered data around that point. A stalled resource stays blocked until recovery.
@@ -504,6 +897,10 @@ export function useAudioTransport({
 
     const check = () => {
       if (!active) {
+        return;
+      }
+      // Never disturb background playback on iOS Lock Screen with boot/readiness seeks.
+      if (document.hidden && !bootVisibleRef.current) {
         return;
       }
       if (bootVisibleRef.current && document.hidden) {
@@ -532,8 +929,6 @@ export function useAudioTransport({
       }
 
       const point = bootVisibleRef.current || !ready ? target : audio.currentTime;
-      // HAVE_ENOUGH_DATA is the browser's playback estimate. Paused AAC streams
-      // can stop fetching with a short reserve, so verify a real second there.
       const reserve = audio.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA ? 1 : 3;
       let buffered = false;
       for (let i = 0; i < audio.buffered.length; i++) {
@@ -565,8 +960,6 @@ export function useAudioTransport({
           ready = false;
           setIsAudioReady(false);
         }
-        // Some browsers stop paused preloading before the required reserve.
-        // Keep preparation silent and moving with the live clock until entry.
         if (
           bootVisibleRef.current &&
           audio.paused &&
@@ -602,7 +995,9 @@ export function useAudioTransport({
 
   return {
     audioRef,
+    dspAudioRef,
     audioSource,
+    dspAudioSource,
     needsGesture,
     setNeedsGesture,
     audioError,
