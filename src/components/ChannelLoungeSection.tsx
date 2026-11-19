@@ -46,11 +46,10 @@ export const ChannelLoungeSection: React.FC<ChannelLoungeSectionProps> = ({
         {/* Left Column: Open Spatial Frequency Telemetry & Morphic Channel Switcher */}
         <FloatPanel className="lounge-telemetry-col" depth={1.4}>
           <div className="lounge-telemetry-header">
-            <span className="section-eyebrow">Выберите настроение</span>
-            <h2 className="section-heading">На вашей волне</h2>
+            <span className="section-eyebrow">Каналы</span>
+            <h2 className="section-heading">Три волны</h2>
             <p className="lounge-telemetry-sub">
-              Переключайте канал, когда хочется другого ритма.
-              Настройки звука сохранятся.
+              Прыгай между каналами, эквалайзер не слетит.
             </p>
           </div>
 
@@ -109,9 +108,9 @@ export const ChannelLoungeSection: React.FC<ChannelLoungeSectionProps> = ({
           </div>
 
           <InteractiveNote
-            title="Слушайте без треклиста"
-            body="Названия треков скрыты. Если понравился момент, оставьте отметку на волне."
-            secretHint="Чистый поток · без имён и метаданных"
+            title="Без названий треков"
+            body="Теги вырезаны. Зашёл момент, ставь метку на таймлайне."
+            secretHint="Вагон 4:20 · только звук, никаких ID3"
           />
         </FloatPanel>
 

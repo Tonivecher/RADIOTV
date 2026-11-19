@@ -240,10 +240,10 @@ export function BootPreloader({
         onReveal?.();
       }
       setPhase('opening');
-      window.setTimeout(finishUnmount, reducedMotion ? 80 : 380);
+      window.setTimeout(finishUnmount, reducedMotion ? 80 : 940);
     } catch {
       entering.current = false;
-      setEntryError('Нажмите «Войти со звуком» или «Войти тихо».');
+      setEntryError('Жми «Войти со звуком» или «Войти без звука».');
     } finally {
       setStarting(false);
     }
@@ -281,9 +281,9 @@ export function BootPreloader({
   return createPortal(
     <MetroHero
       className={`moscow-intro moscow-intro--${phase}`}
-      title="ВЕЧЕР ОТКРЫВАЕТСЯ"
+      title="ВАГОН 4:20"
       scrollHint={ready ? 'СКРОЛЛ' : `ЗАГРУЗКА ${loadPct}%`}
-      tagline="Каждая дверь в вечерний эфир уже открыта."
+      tagline="Твоя остановка. Двери открыты."
       canUnlock={ready}
       fastForward={phase === 'opening'}
       onUnlock={() => void enter(true, true)}
@@ -332,7 +332,7 @@ export function BootPreloader({
             disabled={busy}
             onClick={onPrepare}
           >
-            {needsGesture ? 'Нажмите, чтобы подготовить радио' : `Готовим эфир · ${loadPct}%`}
+            {needsGesture ? 'Нажми, чтобы разбудить звук' : `Готовим вагон · ${loadPct}%`}
           </button>
         )}
       </div>

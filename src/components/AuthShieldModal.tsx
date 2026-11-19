@@ -159,8 +159,8 @@ export const AuthShieldModal: React.FC<AuthShieldModalProps> = ({
       <FloatPanel className="auth-modal" depth={0.6}>
         <div className="auth-modal__top">
           <div>
-            <span className="auth-modal__code">ToniVecherRadio</span>
-            <h2 className="auth-modal__title">Как вас называть?</h2>
+            <span className="auth-modal__code">Вагон 4:20</span>
+            <h2 className="auth-modal__title">Кто в эфире?</h2>
           </div>
           <button type="button" className="auth-modal__close" aria-label="Закрыть окно входа" onClick={onClose}>
             ×
@@ -168,8 +168,7 @@ export const AuthShieldModal: React.FC<AuthShieldModalProps> = ({
         </div>
 
         <p className="auth-modal__desc">
-          Выберите имя и PIN-код, чтобы узнавать свои сообщения и отметки.
-          Для входа без сохранённого имени можно продолжить гостем.
+          Придумай позывной и PIN (6–16 цифр), чтобы закрепить его за собой. Или просто заходи гостем.
         </p>
 
         <form className="auth-modal__form" onSubmit={handleSubmit}>
@@ -186,11 +185,11 @@ export const AuthShieldModal: React.FC<AuthShieldModalProps> = ({
           />
 
           <label className="auth-field">
-            <span className="auth-field__label">Имя в чате</span>
+            <span className="auth-field__label">Позывной</span>
             <input
               type="text"
               className="auth-field__input"
-              placeholder="Ваше имя"
+              placeholder="Позывной"
               maxLength={20}
               value={callsign}
               onChange={(e) => setCallsign(e.target.value)}

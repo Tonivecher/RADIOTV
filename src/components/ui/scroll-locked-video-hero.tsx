@@ -44,9 +44,9 @@ export default function MetroHero({
   videoSrc = DEFAULT_VIDEO,
   mobileVideoSrc = DEFAULT_MOBILE_VIDEO,
   posterSrc = DEFAULT_POSTER,
-  title = 'ВЕЧЕР ОТКРЫВАЕТСЯ',
+  title = 'ВАГОН 4:20',
   scrollHint = 'СКРОЛЛ',
-  tagline = 'Каждая дверь в вечерний эфир уже открыта.',
+  tagline = 'Твоя остановка. Двери открыты.',
   signature = DEFAULT_SIGNATURE,
   scrubDistance = 2400,
   touchScrubDistance = 1100,
@@ -279,9 +279,9 @@ export default function MetroHero({
     function frame() {
       if (fastForwardRef.current) {
         targetProgress = 1;
-        currentProgress += (1 - currentProgress) * 0.25;
+        currentProgress += (1 - currentProgress) * 0.14;
       } else {
-        currentProgress += (targetProgress - currentProgress) * 0.18;
+        currentProgress += (targetProgress - currentProgress) * 0.16;
       }
 
       const liveDuration =
@@ -290,35 +290,33 @@ export default function MetroHero({
           : Number.isFinite(video.duration) && video.duration > 0
             ? video.duration
             : 0;
-      if (liveDuration > 0) {
+      if (liveDuration > 0 && currentProgress < 0.997) {
         duration = liveDuration;
         const targetTime = clamp(currentProgress * liveDuration, 0, Math.max(0, liveDuration - 0.04));
-        if (Math.abs(video.currentTime - targetTime) > 0.012) {
+        if (Math.abs(video.currentTime - targetTime) > 0.016) {
           seekTo(targetTime);
         }
       }
 
       if (videoRef.current) {
-        const scale = 1 + currentProgress * 0.06;
-        videoRef.current.style.transform = `scale(${scale})`;
+        const scale = 1 + currentProgress * 0.055;
+        videoRef.current.style.transform = `scale(${scale.toFixed(4)})`;
       }
       if (titleRef.current) {
         const t = 1 - clamp(currentProgress / 0.35, 0, 1);
-        titleRef.current.style.opacity = String(t);
-        titleRef.current.style.transform = `translateY(${(1 - t) * -24}px) scale(${0.96 + t * 0.04})`;
-        titleRef.current.style.filter = `blur(${(1 - t) * 10}px)`;
+        titleRef.current.style.opacity = t.toFixed(3);
+        titleRef.current.style.transform = `translate3d(0, ${((1 - t) * -22).toFixed(1)}px, 0) scale(${(0.96 + t * 0.04).toFixed(4)})`;
       }
       if (hintRef.current) {
         hintRef.current.style.opacity = hasStartedScrolling ? '0' : '1';
       }
       if (taglineRef.current) {
         const t = clamp((currentProgress - 0.82) / 0.18, 0, 1);
-        taglineRef.current.style.opacity = String(t);
-        taglineRef.current.style.transform = `translateY(${(1 - t) * 20}px) scale(${0.97 + t * 0.03})`;
-        taglineRef.current.style.filter = `blur(${(1 - t) * 8}px)`;
+        taglineRef.current.style.opacity = t.toFixed(3);
+        taglineRef.current.style.transform = `translate3d(0, ${((1 - t) * 18).toFixed(1)}px, 0) scale(${(0.97 + t * 0.03).toFixed(4)})`;
       }
       if (progressBarRef.current) {
-        progressBarRef.current.style.transform = `scaleX(${currentProgress})`;
+        progressBarRef.current.style.transform = `scaleX(${currentProgress.toFixed(4)})`;
       }
 
       rafId = requestAnimationFrame(frame);
@@ -542,7 +540,6 @@ export default function MetroHero({
             zIndex: 2,
           }}
         >
-          by{' '}
           <a
             href={signature.url}
             target="_blank"

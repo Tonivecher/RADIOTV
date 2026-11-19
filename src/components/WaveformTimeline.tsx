@@ -763,7 +763,7 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
           ) : (
             <div className="waveform-whisper waveform-whisper--idle">
               <span>
-                Выберите момент на волне, чтобы оставить реакцию или комментарий.
+                Ткни в любое место волны, чтобы поставить метку.
               </span>
             </div>
           )}

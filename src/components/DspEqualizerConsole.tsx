@@ -34,15 +34,16 @@ interface DspEqualizerConsoleProps {
 }
 
 const PRESET_COPY: Record<string, { name: string; subtitle: string }> = {
-  flat: { name: 'Без окраски', subtitle: 'Ровный баланс частот' },
-  giegling_dub: { name: 'Мягкий бас', subtitle: 'Глубокие низкие частоты и спокойная середина' },
-  tresor_bunker: { name: 'Плотный ритм', subtitle: 'Больше баса и перкуссии' },
-  waking_morning: { name: 'Воздух', subtitle: 'Светлее на высоких частотах' },
-  nagra_tape: { name: 'Теплее', subtitle: 'Насыщенный тембр и мягкая компрессия' },
-  late_night: { name: 'Тихий вечер', subtitle: 'Мягкий баланс без резких пиков' },
+  flat: { name: 'Ровно', subtitle: 'Без правок' },
+  giegling_dub: { name: 'Мягкий низ', subtitle: 'Глубокий бас, спокойный верх' },
+  tresor_bunker: { name: 'Плотнее', subtitle: 'Упор на бочку и перкуссию' },
+  waking_morning: { name: 'Светлее', subtitle: 'Приоткрыть высокие' },
+  nagra_tape: { name: 'Плёнка', subtitle: 'Лёгкий перегруз и плотность' },
+  late_night: { name: 'Ночь', subtitle: 'Потише на пиках' },
 };
 
-const DB_READOUT_INTERVAL_MS = 66;
+const DB_READOUT_INTERVAL_MS = 80;
+const SPECTRUM_INTERVAL_MS = 33;
 const TUBE_TICKS = [100, 75, 50, 25, 0] as const;
 const MACRO_NOTCHES = Array.from({ length: 11 }, (_, i) => i * 10);
 
@@ -104,9 +105,25 @@ export const DspEqualizerConsole: React.FC<DspEqualizerConsoleProps> = ({
     let visible = !document.hidden;
     let intersecting = true;
     let lastFrame = performance.now();
+    let lastSpectrumDraw = 0;
     let lastReadout = 0;
     let lastText = '';
     const { l: meterL, r: meterR } = ballisticsRef.current;
+
+    const readThemePalette = () => {
+      const rootStyle = getComputedStyle(document.documentElement);
+      return {
+        accentColor: rootStyle.getPropertyValue('--accent-primary').trim() || '#df8078',
+        gridColor: rootStyle.getPropertyValue('--hairline').trim() || 'rgba(220,186,180,0.18)',
+      };
+    };
+    let themePalette = readThemePalette();
+    let reduceMotionMedia = window.matchMedia('(prefers-reduced-motion: reduce)');
+    let reduceNow = reduceMotionMedia.matches;
+    const onReduceChange = () => {
+      reduceNow = reduceMotionMedia.matches;
+    };
+    reduceMotionMedia.addEventListener('change', onReduceChange);
 
     const paintMeter = (
       fill: HTMLSpanElement | null,
@@ -127,7 +144,6 @@ export const DspEqualizerConsole: React.FC<DspEqualizerConsoleProps> = ({
       lastFrame = now;
       const playing = isPlayingRef.current;
       const nowSec = now * 0.001;
-      const reduceNow = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
       // --- L/R VU + peak hold (works in both DSP and iOS-safe direct mode) ---
       let inL = 0;
@@ -157,6 +173,12 @@ export const DspEqualizerConsole: React.FC<DspEqualizerConsoleProps> = ({
         }
       }
 
+      // Throttle spectrum canvas + tube glow to ~30fps
+      if (lastSpectrumDraw && now - lastSpectrumDraw < SPECTRUM_INTERVAL_MS) {
+        return;
+      }
+      lastSpectrumDraw = now;
+
       // --- Spectrum canvas + live glass tube glow ---
       const bins = getReactiveSpectrumBins(nowSec, playing);
       for (let idx = 0; idx < 10; idx++) {
@@ -176,9 +198,7 @@ export const DspEqualizerConsole: React.FC<DspEqualizerConsoleProps> = ({
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
 
-      const rootStyle = getComputedStyle(document.documentElement);
-      const accentColor = rootStyle.getPropertyValue('--accent-primary').trim() || '#df8078';
-      const gridColor = rootStyle.getPropertyValue('--hairline').trim() || 'rgba(220,186,180,0.18)';
+      const { accentColor, gridColor } = themePalette;
 
       ctx.strokeStyle = gridColor;
       ctx.lineWidth = 1;
@@ -229,6 +249,7 @@ export const DspEqualizerConsole: React.FC<DspEqualizerConsoleProps> = ({
     };
 
     const wake = () => {
+      lastSpectrumDraw = 0;
       if (!rafId && visible && intersecting) {
         rafId = window.requestAnimationFrame(renderLoop);
       }
@@ -250,7 +271,10 @@ export const DspEqualizerConsole: React.FC<DspEqualizerConsoleProps> = ({
     if (canvasRef.current) {
       observer.observe(canvasRef.current);
     }
-    const themeObserver = new MutationObserver(wake);
+    const themeObserver = new MutationObserver(() => {
+      themePalette = readThemePalette();
+      wake();
+    });
     themeObserver.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ['data-theme'],
@@ -258,6 +282,7 @@ export const DspEqualizerConsole: React.FC<DspEqualizerConsoleProps> = ({
     wake();
     return () => {
       window.cancelAnimationFrame(rafId);
+      reduceMotionMedia.removeEventListener('change', onReduceChange);
       observer.disconnect();
       themeObserver.disconnect();
       document.removeEventListener('visibilitychange', visibility);
@@ -347,17 +372,17 @@ export const DspEqualizerConsole: React.FC<DspEqualizerConsoleProps> = ({
         {/* Header Row */}
         <div className="dsp-top-bar">
           <div className="dsp-top-bar__titles">
-            <span className="section-eyebrow">Звук под себя</span>
-            <h2 className="section-heading">Настройте звук</h2>
+            <span className="section-eyebrow">Эквалайзер</span>
+            <h2 className="section-heading">Звук</h2>
             <p className="dsp-active-preset-caption">
               {isBypassed ? (
-                'Оригинальный звук · обработка выключена'
+                'Чистый поток, эквалайзер выключен'
               ) : currentPreset ? (
                 <>
                   Профиль: <strong>{currentPreset.name}</strong> · {currentPreset.subtitle}
                 </>
               ) : (
-                'Ручная настройка · диапазон ±2 дБ'
+                'Своя кривая · диапазон ±2 дБ'
               )}
             </p>
           </div>

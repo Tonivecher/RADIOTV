@@ -76,8 +76,8 @@ export const LiveEtherChat: React.FC<LiveEtherChatProps> = ({
         {/* Top Header */}
         <div className="chat-header">
           <div className="chat-header__left">
-            <span className="section-eyebrow">Разговоры под музыку</span>
-            <h2 className="section-heading">Чат эфира</h2>
+            <span className="section-eyebrow">В вагоне</span>
+            <h2 className="section-heading">Чат</h2>
           </div>
 
           <div className="chat-header__right">
@@ -114,7 +114,7 @@ export const LiveEtherChat: React.FC<LiveEtherChatProps> = ({
         <div ref={feedRef} className="chat-stream">
           {visibleMessages.length === 0 && (
             <p className="chat-empty">
-              Пока тихо. Можно просто слушать или начать разговор.
+              В чате тихо. Напиши что-нибудь или просто слушай.
             </p>
           )}
           {visibleMessages.map((msg) => {

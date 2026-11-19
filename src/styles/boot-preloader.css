@@ -4,8 +4,9 @@
   font-family: var(--font-body, 'Inter', sans-serif);
   overscroll-behavior: none;
   -webkit-tap-highlight-color: transparent;
-  transition: opacity 0.38s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.38s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity 0.92s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.92s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
 }
 
 .moscow-intro:focus {
@@ -14,7 +15,7 @@
 
 .moscow-intro--opening {
   opacity: 0;
-  transform: scale(1.025);
+  transform: scale(1.04);
   pointer-events: none;
 }
 

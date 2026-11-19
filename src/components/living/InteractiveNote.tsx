@@ -23,7 +23,7 @@ interface DustSpeck {
 export const InteractiveNote: React.FC<InteractiveNoteProps> = ({
   title,
   body,
-  secretHint = 'Сет без метаданных · ловите момент на слух',
+  secretHint = 'Вагон 4:20 · только звук, никаких ID3',
 }) => {
   const [revealed, setRevealed] = useState(false);
   const [hovered, setHovered] = useState(false);
@@ -72,11 +72,17 @@ export const InteractiveNote: React.FC<InteractiveNoteProps> = ({
     };
 
     let last = performance.now();
+    let lastDraw = 0;
     const tick = (now: number) => {
       raf = 0;
       if (!onScreen || document.hidden) return;
-      const dt = Math.min(0.05, (now - last) / 1000);
+      if (!reduced && lastDraw && now - lastDraw < 55) {
+        raf = window.requestAnimationFrame(tick);
+        return;
+      }
+      const dt = Math.min(0.08, (now - last) / 1000);
       last = now;
+      lastDraw = now;
       ctx.clearRect(0, 0, width, height);
       ctx.fillStyle = accent;
 

@@ -163,8 +163,7 @@ export const HeroTransportStage: React.FC<HeroTransportStageProps> = ({
               className="hero-display-title"
             />
             <p className="hero-lead-copy">
-              Выбирайте канал и слушайте вместе.
-              Отмечайте любимые моменты прямо на волне.
+              Три канала без треклистов. Жми плэй, кидай отметки в сет.
             </p>
             {stateError && (
               <p className="auth-error-box" role="alert">

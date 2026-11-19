@@ -1,15 +1,11 @@
-@keyframes channelPortalFlashIn {
+@keyframes channelPortalFadeIn {
   0% {
     opacity: 0;
-    clip-path: inset(46% 0 46% 0);
-  }
-  18% {
-    opacity: 1;
-    clip-path: inset(0 0 0 0);
+    transform: scale(1.02);
   }
   100% {
     opacity: 1;
-    clip-path: inset(0 0 0 0);
+    transform: scale(1);
   }
 }
 
@@ -32,15 +28,15 @@
   pointer-events: none;
   background: color-mix(in srgb, var(--portal-bg, #160a0d) 64%, transparent);
   color: var(--portal-text, var(--text-primary, #f2e2dc));
-  animation: channelPortalFlashIn 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
-  transition: opacity 0.42s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.42s cubic-bezier(0.22, 1, 0.36, 1);
-  will-change: opacity, transform, clip-path;
+  animation: channelPortalFadeIn 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+  transition: opacity 0.65s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.65s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
 }
 
 .channel-transition-portal.is-exiting {
   opacity: 0;
-  transform: scale(1.018);
+  transform: scale(1.022);
 }
 
 .channel-transition-portal__video-fallback {
@@ -128,15 +124,15 @@
   left: 0;
   right: 0;
   bottom: 0;
-  height: 3px;
+  height: 2px;
   background: linear-gradient(
     90deg,
     var(--portal-accent, #df8078),
-    #4de4f4,
+    var(--portal-text, #f2e2dc),
     var(--portal-secondary, #e4b493)
   );
   transform-origin: left center;
-  animation: channelPortalBarSweep 1.52s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation: channelPortalBarSweep 1.62s cubic-bezier(0.22, 1, 0.36, 1) forwards;
   z-index: 3;
 }
 

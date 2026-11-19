@@ -46,20 +46,20 @@ export const EMPTY_STATE: RadioStatePayload = {
 export const CHANNEL_COPY: Record<string, { name: string; description: string }> = {
   'ch-main': {
     name: 'Основной',
-    description: 'Deep-tech и tech. Ровный ритм городского вечера.',
+    description: 'Deep-tech и tech. Ровный ход.',
   },
   'ch-deep': {
     name: 'Deep',
-    description: 'Глубже в звук. Deep и мягкий бас.',
+    description: 'Deep и мягкий низ. Без суеты.',
   },
   'ch-afterglow': {
     name: 'DeepTech',
-    description: 'Медленнее, теплее. Глубокий ночной ритм.',
+    description: 'Поздний deep tech. Темнее и плотнее.',
   },
 };
 
 export const CHANNEL_GENRE_TAGS: Record<string, readonly string[]> = {
-  'ch-main': ['deep-tech · tech · deep', 'minimal tech', 'ночной грув'],
-  'ch-deep': ['deep house', 'тёплый саб-бас', 'dub & deep'],
-  'ch-afterglow': ['deep tech', 'после полуночи', 'гипнотический ритм'],
+  'ch-main': ['deep-tech · tech · deep', 'minimal tech', 'ровный ход'],
+  'ch-deep': ['deep house', 'мягкий низ', 'dub & deep'],
+  'ch-afterglow': ['deep tech', 'после полуночи', 'плотный грув'],
 };

@@ -327,7 +327,7 @@ export const App: React.FC = () => {
           <EveningBackground
             ref={backgroundRef}
             channelId={radioLive.channelId}
-            portalActive={false}
+            portalActive={showBootloader || Boolean(portalTransition)}
             retry={videoRetry}
             showControls={!showBootloader && !radioSession.authModalOpen}
             controlsHost={videoControlsHost}
@@ -405,7 +405,7 @@ export const App: React.FC = () => {
                   </span>
                   <div className="island-brand__text">
                     <StationWordmark />
-                    <span className="island-brand__tag">Музыка на вечер</span>
+                    <span className="island-brand__tag">Вагон 4:20</span>
                   </div>
                 </div>
 
@@ -466,7 +466,7 @@ export const App: React.FC = () => {
                         setShowBootloader(true);
                       }}
                     >
-                      <SlideLabel text="О радио" />
+                      <SlideLabel text="Вагон" />
                     </button>
                   </div>
                 </div>
@@ -550,7 +550,7 @@ export const App: React.FC = () => {
                 <RadioMark size={28} animate />
               </MagneticMark>
               <span>ToniVecherRadio</span>
-              <span>Музыка на вечер</span>
+              <span>Вагон 4:20</span>
             </footer>
 
             <FloatingMiniDock

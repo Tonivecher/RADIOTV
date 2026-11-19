@@ -23,8 +23,9 @@ interface ChannelTransitionPortalProps {
   onComplete: () => void;
 }
 
-const TRANSFER_DURATION_MS = 1550;
+const TRANSFER_DURATION_MS = 1650;
 const REDUCED_DURATION_MS = 160;
+const PORTAL_FRAME_MS = 32;
 
 /**
  * Instant automatic cinematic glitch-transfer overlay (no scroll-lock, no body pinning, no SCROLL prompt).
@@ -116,6 +117,7 @@ export function ChannelTransitionPortal({
     }
 
     const startMs = performance.now();
+    let lastDrawMs = 0;
     let rafId = 0;
     let finished = false;
     let fadeTriggered = false;
@@ -127,7 +129,7 @@ export function ChannelTransitionPortal({
       onCompleteRef.current();
     };
 
-    const safetyTimer = window.setTimeout(completeNow, TRANSFER_DURATION_MS + 200);
+    const safetyTimer = window.setTimeout(completeNow, TRANSFER_DURATION_MS + 220);
 
     const tick = (nowMs: number) => {
       if (finished) return;
@@ -139,13 +141,14 @@ export function ChannelTransitionPortal({
       const elapsed = nowMs - startMs;
       const progress = Math.max(0, Math.min(1, elapsed / TRANSFER_DURATION_MS));
 
-      if (!fadeTriggered && progress >= 0.74) {
+      if (!fadeTriggered && progress >= 0.58) {
         fadeTriggered = true;
         setExiting(true);
       }
 
       const canvas = canvasRef.current;
-      if (canvas) {
+      if (canvas && (!lastDrawMs || nowMs - lastDrawMs >= PORTAL_FRAME_MS)) {
+        lastDrawMs = nowMs;
         const width = Math.max(1, window.innerWidth);
         const height = Math.max(1, window.innerHeight);
         const liveVid =
@@ -158,20 +161,20 @@ export function ChannelTransitionPortal({
               : null;
 
         const source = liveVid || posterImgRef.current;
-        const surge = Math.pow(Math.sin(progress * Math.PI), 0.78);
-        const morphedProfile = interpolateAsciiProfile(fromProfile, toProfile, progress, 0.82);
+        const surge = Math.pow(Math.sin(progress * Math.PI), 1.05);
+        const morphedProfile = interpolateAsciiProfile(fromProfile, toProfile, progress, 0.55);
 
         renderer.renderFrame(canvas, source, {
           width,
           height,
-          dpr: Math.min(window.devicePixelRatio || 1, 1.5),
+          dpr: 1,
           overscanTopPx: 0,
-          timeSec: nowMs * 0.001 + progress * 3.2,
+          timeSec: nowMs * 0.001 + progress * 2.2,
           profile: morphedProfile,
           animate: true,
-          scale: 1 + surge * 0.075,
+          scale: 1 + surge * 0.045,
           continuousGlitch: true,
-          transferSurge: surge,
+          transferSurge: surge * 0.72,
         });
       }
 
@@ -232,9 +235,9 @@ export function ChannelTransitionPortal({
           as="div"
           text={copy.title}
           trigger="change"
-          intensity="strong"
+          intensity="subtle"
           accent={copy.accentHex}
-          secondaryAccent="#4de4f4"
+          secondaryAccent={copy.secondaryHex}
           burstOnMount
           className="channel-transition-portal__title"
         />
