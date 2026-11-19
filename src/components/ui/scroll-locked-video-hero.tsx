@@ -1,531 +1,458 @@
-"use client"
-
-import React, { useEffect, useRef, useState } from "react"
-
-// ─────────────────────────────────────────────────────────────
-// THE CITY OPENS — locked scroll-scrub video hero
-// The page cannot move while this is active — body is pinned
-// with position:fixed (the same bulletproof technique modal
-// libraries use; plain overflow:hidden alone isn't reliable
-// across browsers). Wheel/touch input is captured and used
-// purely to drive video.currentTime, forward and backward.
-// Adapted with optional custom canvas/portal hooks so genre
-// transitions reuse one single scroll-lock and scrub engine.
-// ─────────────────────────────────────────────────────────────
-
-export interface MetroHeroFrameContext {
-  video: HTMLVideoElement
-  section: HTMLDivElement
-  progress: number
-  timeSec: number
-  reducedMotion: boolean
-}
+import React, { useEffect, useRef, useState } from 'react';
 
 export interface MetroHeroProps {
-  videoSrc?: string
-  posterSrc?: string
-  eyebrow?: string
-  title?: string
-  scrollHint?: string
-  tagline?: string
-  skipLabel?: string
-  signature?: { name: string; url: string } | false
-  /** Total input distance (px) needed to scrub the full video. Tune to taste. */
-  scrubDistance?: number
-  maxScale?: number
-  taglineRange?: [number, number]
-  completionThreshold?: number
-  accentColor?: string
-  progressGradient?: string
-  titleFontFamily?: string
-  bodyFontFamily?: string
-  exiting?: boolean
-  dialogRole?: boolean
-  backdropSlot?: React.ReactNode
-  onRenderFrame?: (ctx: MetroHeroFrameContext) => void
-  onComplete?: () => void
-  onSkip?: () => void
-  className?: string
-  style?: React.CSSProperties
+  videoSrc?: string;
+  mobileVideoSrc?: string;
+  posterSrc?: string;
+  title?: string;
+  scrollHint?: string;
+  tagline?: string;
+  signature?: { name: string; url: string } | false;
+  /** Total input distance (px) needed to scrub the full video. */
+  scrubDistance?: number;
+  touchScrubDistance?: number;
+  /** Extra scroll distance past 100% before unlocking and entering the site. */
+  unlockAfterEndPx?: number;
+  canUnlock?: boolean;
+  fastForward?: boolean;
+  onUnlock?: () => void;
+  onKeyDown?: React.KeyboardEventHandler<HTMLDivElement>;
+  ariaBusy?: boolean;
+  children?: React.ReactNode;
+  className?: string;
+  style?: React.CSSProperties;
 }
 
-const DEFAULT_VIDEO =
-  "https://cdn.21st.dev/assets/mirror/21/21a77eac28eacbb7e142016eefeaa0b4a766619e51113629a3bc6df6af066c0f.mp4"
+const DEFAULT_VIDEO = '/media/metro-entry.mp4';
+const DEFAULT_MOBILE_VIDEO = '/media/metro-entry-mobile.mp4';
+const DEFAULT_POSTER = '/media/metro-entry-poster.jpg';
 const DEFAULT_SIGNATURE = {
-  name: "guglielmogiannattasio.exe",
-  url: "https://www.guglielmogiannattasio.it",
-}
+  name: 'tonivecher.online',
+  url: 'https://radio.tonivecher.online',
+};
 const SANS =
-  "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+  "var(--font-display, 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif)";
 
-const COL_BG = "#05070d"
-const COL_TEXT = "#dfd3c0"
+const COL_BG = '#120e0b';
+const COL_TEXT = '#efe3d2';
 
-function clamp(v: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, v))
+function clamp(v: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, v));
 }
 
 export default function MetroHero({
   videoSrc = DEFAULT_VIDEO,
-  posterSrc,
-  eyebrow,
-  title = "THE CITY OPENS",
-  scrollHint = "SCROLL",
-  tagline = "Every door in the city is already open.",
-  skipLabel,
+  mobileVideoSrc = DEFAULT_MOBILE_VIDEO,
+  posterSrc = DEFAULT_POSTER,
+  title = 'ВЕЧЕР ОТКРЫВАЕТСЯ',
+  scrollHint = 'СКРОЛЛ',
+  tagline = 'Каждая дверь в вечерний эфир уже открыта.',
   signature = DEFAULT_SIGNATURE,
-  scrubDistance = 3200,
-  maxScale = 0.06,
-  taglineRange = [0.82, 1],
-  completionThreshold,
-  accentColor = "rgba(223,211,192,0.78)",
-  progressGradient = "linear-gradient(90deg, rgba(223,211,192,0.45), rgba(223,211,192,0.88))",
-  titleFontFamily = SANS,
-  bodyFontFamily = SANS,
-  exiting = false,
-  dialogRole = false,
-  backdropSlot,
-  onRenderFrame,
-  onComplete,
-  onSkip,
+  scrubDistance = 2400,
+  touchScrubDistance = 1100,
+  unlockAfterEndPx = 520,
+  canUnlock = true,
+  fastForward = false,
+  onUnlock,
+  onKeyDown,
+  ariaBusy,
+  children,
   className,
   style,
 }: MetroHeroProps) {
-  const sectionRef = useRef<HTMLDivElement>(null)
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const titleRef = useRef<HTMLDivElement>(null)
-  const hintRef = useRef<HTMLDivElement>(null)
-  const taglineRef = useRef<HTMLDivElement>(null)
-  const progressBarRef = useRef<HTMLDivElement>(null)
-  const skipButtonRef = useRef<HTMLButtonElement>(null)
-  const [ready, setReady] = useState(false)
+  const sectionRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const titleRef = useRef<HTMLDivElement>(null);
+  const hintRef = useRef<HTMLDivElement>(null);
+  const taglineRef = useRef<HTMLDivElement>(null);
+  const progressBarRef = useRef<HTMLDivElement>(null);
+  const [ready, setReady] = useState(false);
 
-  const onRenderFrameRef = useRef(onRenderFrame)
-  onRenderFrameRef.current = onRenderFrame
-  const onCompleteRef = useRef(onComplete)
-  onCompleteRef.current = onComplete
-  const onSkipRef = useRef(onSkip)
-  onSkipRef.current = onSkip
-  const exitingRef = useRef(exiting)
-  exitingRef.current = exiting
-  const releaseLockRef = useRef<() => void>(() => {})
+  const [sourceUrl] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia?.('(max-width: 760px)').matches
+      ? mobileVideoSrc || videoSrc
+      : videoSrc
+  );
+  const [blobUrl, setBlobUrl] = useState('');
 
-  const taglineStart = taglineRange[0]
-  const taglineSpan = Math.max(0.05, taglineRange[1] - taglineRange[0])
+  const canUnlockRef = useRef(canUnlock);
+  canUnlockRef.current = canUnlock;
+  const fastForwardRef = useRef(fastForward);
+  fastForwardRef.current = fastForward;
+  const onUnlockRef = useRef(onUnlock);
+  onUnlockRef.current = onUnlock;
+
+  // Preload the all-intra MP4 into a memory Blob so frame-by-frame seeking is 100% RAM-backed (0ms network latency).
+  useEffect(() => {
+    const controller = new AbortController();
+    let objectUrl = '';
+    fetch(sourceUrl, { signal: controller.signal })
+      .then((res) => (res.ok ? res.blob() : Promise.reject(new Error('Fetch failed'))))
+      .then((blob) => {
+        if (controller.signal.aborted || !blob.size) return;
+        objectUrl = URL.createObjectURL(blob);
+        setBlobUrl(objectUrl);
+      })
+      .catch(() => {
+        // Fallback to direct HTTP 206 range-enabled sourceUrl
+      });
+
+    return () => {
+      controller.abort();
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [sourceUrl]);
 
   useEffect(() => {
-    if (exiting) {
-      releaseLockRef.current()
-    }
-  }, [exiting])
-
-  useEffect(() => {
-    const video = videoRef.current
-    const section = sectionRef.current
-    if (!video || !section) return
+    const videoEl = videoRef.current;
+    const section = sectionRef.current;
+    if (!videoEl || !section) return;
+    const video: HTMLVideoElement = videoEl;
 
     const reduceMotion =
-      typeof window !== "undefined" &&
-      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
-    let duration = Number.isFinite(video.duration) ? video.duration : 0
-    let rafId = 0
-    let targetProgress = 0
-    let currentProgress = 0
-    let hasStartedScrolling = false
-    let isSeeking = false
-    let pendingTime: number | null = null
-    let locked = false
-    let lockedScrollY = 0
-    let touchStartY = 0
-    let completed = false
-
-    const engageLock = () => {
-      if (locked || reduceMotion || exitingRef.current || typeof document === "undefined") return
-      locked = true
-      lockedScrollY = window.scrollY
-      const b = document.body.style
-      b.position = "fixed"
-      b.top = `-${lockedScrollY}px`
-      b.left = "0"
-      b.right = "0"
-      b.width = "100%"
-      b.height = "100%"
-      b.overscrollBehavior = "none"
-    }
-
-    const releaseLock = () => {
-      if (!locked || typeof document === "undefined") return
-      locked = false
-      const y = lockedScrollY
-      const b = document.body.style
-      b.position = ""
-      b.top = ""
-      b.left = ""
-      b.right = ""
-      b.width = ""
-      b.height = ""
-      b.overscrollBehavior = ""
-      const html = document.documentElement
-      const prevScrollBehavior = html.style.scrollBehavior
-      html.style.scrollBehavior = "auto"
-      window.scrollTo(0, y)
-      html.style.scrollBehavior = prevScrollBehavior
-    }
-    releaseLockRef.current = releaseLock
-
-    engageLock()
-
-    if (skipLabel && onSkipRef.current) {
-      requestAnimationFrame(() => skipButtonRef.current?.focus({ preventScroll: true }))
-    }
-
-    const seekTo = (t: number) => {
-      if (isSeeking) {
-        pendingTime = t
-        return
-      }
-      isSeeking = true
-      try {
-        video.currentTime = t
-      } catch {
-        isSeeking = false
-      }
-    }
+    let duration = Number.isFinite(video.duration) ? video.duration : 0;
+    let rafId = 0;
+    let targetProgress = 0;
+    let currentProgress = 0;
+    let overScrollPx = 0;
+    let unlocked = false;
+    let hasStartedScrolling = false;
+    let isSeeking = false;
+    let pendingTime: number | null = null;
+    let locked = false;
+    let lockedScrollY = 0;
+    let touchStartY = 0;
 
     const onLoadedData = () => {
-      duration = Number.isFinite(video.duration) ? video.duration : 0
-      setReady(true)
+      duration = Number.isFinite(video.duration) ? video.duration : 0;
+      setReady(true);
       if (reduceMotion && duration > 0) {
-        seekTo(duration * 0.92)
+        video.currentTime = duration * 0.92;
       }
-      if (onRenderFrameRef.current) {
-        onRenderFrameRef.current({
-          video,
-          section,
-          progress: reduceMotion ? 1 : currentProgress,
-          timeSec: performance.now() * 0.001,
-          reducedMotion: Boolean(reduceMotion),
-        })
-      }
+    };
+    video.addEventListener('loadeddata', onLoadedData);
+    video.addEventListener('loadedmetadata', onLoadedData);
+    if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
+      onLoadedData();
     }
+
+    // Silent play-then-immediately-pause on mount to kick off frame decoding on iOS Safari.
+    const kickstartLoad = () => {
+      const p = video.play();
+      if (p && typeof p.then === 'function') {
+        p.then(() => video.pause()).catch(() => {});
+      } else {
+        video.pause();
+      }
+    };
+    kickstartLoad();
 
     const onSeeked = () => {
-      isSeeking = false
+      isSeeking = false;
       if (pendingTime !== null) {
-        const t = pendingTime
-        pendingTime = null
-        isSeeking = true
+        const t = pendingTime;
+        pendingTime = null;
+        isSeeking = true;
         try {
-          video.currentTime = t
+          video.currentTime = t;
         } catch {
-          isSeeking = false
+          isSeeking = false;
         }
       }
-    }
+    };
+    video.addEventListener('seeked', onSeeked);
 
-    video.addEventListener("loadeddata", onLoadedData)
-    video.addEventListener("seeked", onSeeked)
-    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-      onLoadedData()
-    }
-
-    // Silent play-then-pause kickstart so iOS Safari buffers frames before scrubbing.
-    const kickstartLoad = () => {
-      const p = video.play()
-      if (p && typeof p.then === "function") {
-        p.then(() => video.pause()).catch(() => {})
-      } else {
-        video.pause()
+    function seekTo(t: number) {
+      if (isSeeking) {
+        pendingTime = t;
+        return;
+      }
+      isSeeking = true;
+      try {
+        video.currentTime = t;
+      } catch {
+        isSeeking = false;
       }
     }
-    kickstartLoad()
 
-    const addDelta = (deltaY: number) => {
-      if (completed || exitingRef.current) return false
-      const next = clamp(targetProgress + deltaY / scrubDistance, 0, 1)
-      targetProgress = next
-      if (targetProgress > 0.001) hasStartedScrolling = true
-      return true
+    function engageLock() {
+      if (locked || typeof document === 'undefined') return;
+      locked = true;
+      lockedScrollY = window.scrollY;
+      const b = document.body.style;
+      b.position = 'fixed';
+      b.top = `-${lockedScrollY}px`;
+      b.left = '0';
+      b.right = '0';
+      b.width = '100%';
+      b.height = '100%';
+      b.overscrollBehavior = 'none';
+    }
+
+    function releaseLock() {
+      if (!locked || typeof document === 'undefined') return;
+      locked = false;
+      const b = document.body.style;
+      b.position = '';
+      b.top = '';
+      b.left = '';
+      b.right = '';
+      b.width = '';
+      b.height = '';
+      b.overscrollBehavior = '';
+      window.scrollTo(0, 0);
+    }
+
+    engageLock();
+
+    function addDelta(deltaY: number, distanceScale: number) {
+      if (unlocked || fastForwardRef.current) return true;
+
+      // Once the video has reached the end and the tagline is in focus, continued forward
+      // pushing accumulates towards unlocking the page into the radio site.
+      if (deltaY > 0 && targetProgress >= 0.995 && currentProgress >= 0.94) {
+        if (canUnlockRef.current) {
+          overScrollPx += deltaY;
+          if (overScrollPx >= unlockAfterEndPx && !unlocked) {
+            unlocked = true;
+            onUnlockRef.current?.();
+          }
+        }
+        return true;
+      }
+
+      if (deltaY < 0) {
+        overScrollPx = 0;
+      }
+
+      const next = clamp(targetProgress + deltaY / distanceScale, 0, 1);
+      targetProgress = next;
+      if (targetProgress > 0.001) hasStartedScrolling = true;
+      return true;
     }
 
     const onWheel = (e: WheelEvent) => {
-      if (exitingRef.current) return
-      addDelta(e.deltaY)
-      e.preventDefault()
-    }
+      addDelta(e.deltaY, scrubDistance);
+      e.preventDefault();
+    };
 
     const onTouchStart = (e: TouchEvent) => {
-      if (exitingRef.current) return
-      touchStartY = e.touches[0]?.clientY ?? 0
-    }
+      touchStartY = e.touches[0]?.clientY ?? 0;
+    };
     const onTouchMove = (e: TouchEvent) => {
-      if (exitingRef.current) return
-      const y = e.touches[0]?.clientY ?? touchStartY
-      const deltaY = touchStartY - y
-      touchStartY = y
-      addDelta(deltaY)
-      e.preventDefault()
-    }
+      const y = e.touches[0]?.clientY ?? touchStartY;
+      const deltaY = touchStartY - y;
+      touchStartY = y;
+      addDelta(deltaY, touchScrubDistance);
+      e.preventDefault();
+    };
 
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (exitingRef.current) return
-      if (e.key === "Escape" && (onSkipRef.current || onCompleteRef.current)) {
-        e.preventDefault()
-        releaseLock()
-        ;(onSkipRef.current || onCompleteRef.current)?.()
-      } else if (reduceMotion) {
-        if (
-          (e.key === "ArrowDown" || e.key === "PageDown") &&
-          (onSkipRef.current || onCompleteRef.current)
-        ) {
-          e.preventDefault()
-          ;(onSkipRef.current || onCompleteRef.current)?.()
+    const onWindowKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowDown' || e.key === 'PageDown') {
+        e.preventDefault();
+        addDelta(280, scrubDistance);
+      } else if (e.key === 'ArrowUp' || e.key === 'PageUp') {
+        e.preventDefault();
+        addDelta(-280, scrubDistance);
+      } else if (e.key === ' ') {
+        const tgt = e.target;
+        if (tgt instanceof HTMLElement && tgt.closest('button, a, input')) {
+          return;
         }
-      } else if (e.key === "ArrowDown" || e.key === "PageDown") {
-        e.preventDefault()
-        addDelta(240)
-      } else if (e.key === " ") {
-        const target = e.target
-        if (
-          target instanceof HTMLElement &&
-          target.closest("button, a, input, [role='button']")
-        ) {
-          return
-        }
-        e.preventDefault()
-        addDelta(240)
-      } else if (e.key === "ArrowUp" || e.key === "PageUp") {
-        e.preventDefault()
-        addDelta(-240)
+        e.preventDefault();
+        addDelta(280, scrubDistance);
       }
+    };
+
+    window.addEventListener('wheel', onWheel, { passive: false });
+    window.addEventListener('touchstart', onTouchStart, { passive: true });
+    window.addEventListener('touchmove', onTouchMove, { passive: false });
+    window.addEventListener('keydown', onWindowKeyDown);
+    section.addEventListener('touchstart', onTouchStart, { passive: true, capture: true });
+    section.addEventListener('touchmove', onTouchMove, { passive: false, capture: true });
+
+    function frame() {
+      if (fastForwardRef.current) {
+        targetProgress = 1;
+        currentProgress += (1 - currentProgress) * 0.25;
+      } else {
+        currentProgress += (targetProgress - currentProgress) * 0.18;
+      }
+
+      const liveDuration =
+        duration > 0
+          ? duration
+          : Number.isFinite(video.duration) && video.duration > 0
+            ? video.duration
+            : 0;
+      if (liveDuration > 0) {
+        duration = liveDuration;
+        const targetTime = clamp(currentProgress * liveDuration, 0, Math.max(0, liveDuration - 0.04));
+        if (Math.abs(video.currentTime - targetTime) > 0.012) {
+          seekTo(targetTime);
+        }
+      }
+
+      if (videoRef.current) {
+        const scale = 1 + currentProgress * 0.06;
+        videoRef.current.style.transform = `scale(${scale})`;
+      }
+      if (titleRef.current) {
+        const t = 1 - clamp(currentProgress / 0.35, 0, 1);
+        titleRef.current.style.opacity = String(t);
+        titleRef.current.style.transform = `translateY(${(1 - t) * -24}px) scale(${0.96 + t * 0.04})`;
+        titleRef.current.style.filter = `blur(${(1 - t) * 10}px)`;
+      }
+      if (hintRef.current) {
+        hintRef.current.style.opacity = hasStartedScrolling ? '0' : '1';
+      }
+      if (taglineRef.current) {
+        const t = clamp((currentProgress - 0.82) / 0.18, 0, 1);
+        taglineRef.current.style.opacity = String(t);
+        taglineRef.current.style.transform = `translateY(${(1 - t) * 20}px) scale(${0.97 + t * 0.03})`;
+        taglineRef.current.style.filter = `blur(${(1 - t) * 8}px)`;
+      }
+      if (progressBarRef.current) {
+        progressBarRef.current.style.transform = `scaleX(${currentProgress})`;
+      }
+
+      rafId = requestAnimationFrame(frame);
     }
 
     if (!reduceMotion) {
-      window.addEventListener("wheel", onWheel, { passive: false })
-      window.addEventListener("touchstart", onTouchStart, { passive: true })
-      window.addEventListener("touchmove", onTouchMove, { passive: false })
-      section.addEventListener("touchstart", onTouchStart, { passive: true, capture: true })
-      section.addEventListener("touchmove", onTouchMove, { passive: false, capture: true })
-    }
-    window.addEventListener("keydown", onKeyDown)
-
-    const frame = (nowMs: number) => {
-      if (exitingRef.current) return
-      currentProgress += (targetProgress - currentProgress) * 0.18
-
-      if (duration > 0) {
-        const safeTime = currentProgress * Math.max(0, duration - 0.06)
-        if (Math.abs(video.currentTime - safeTime) > 0.025) {
-          seekTo(safeTime)
-        }
-      }
-
-      if (onRenderFrameRef.current) {
-        onRenderFrameRef.current({
-          video,
-          section,
-          progress: currentProgress,
-          timeSec: nowMs * 0.001,
-          reducedMotion: Boolean(reduceMotion),
-        })
-      } else if (videoRef.current) {
-        const scale = 1 + currentProgress * maxScale
-        videoRef.current.style.transform = `scale(${scale})`
-      }
-
-      if (titleRef.current) {
-        const t = 1 - clamp(currentProgress / 0.35, 0, 1)
-        titleRef.current.style.opacity = String(t)
-        titleRef.current.style.transform = `translateY(${(1 - t) * -24}px) scale(${0.96 + t * 0.04})`
-        titleRef.current.style.filter = `blur(${(1 - t) * 10}px)`
-      }
-      if (hintRef.current) {
-        hintRef.current.style.opacity = hasStartedScrolling ? "0" : "1"
-      }
-      if (taglineRef.current) {
-        const t = clamp((currentProgress - taglineStart) / taglineSpan, 0, 1)
-        taglineRef.current.style.opacity = String(t)
-        taglineRef.current.style.transform = `translateY(${(1 - t) * 20}px) scale(${0.97 + t * 0.03})`
-        taglineRef.current.style.filter = `blur(${(1 - t) * 8}px)`
-      }
-      if (progressBarRef.current) {
-        progressBarRef.current.style.transform = `scaleX(${currentProgress})`
-      }
-
-      if (
-        !completed &&
-        completionThreshold !== undefined &&
-        onCompleteRef.current &&
-        targetProgress >= completionThreshold &&
-        currentProgress >= completionThreshold - 0.015
-      ) {
-        completed = true
-        releaseLock()
-        onCompleteRef.current()
-        return
-      }
-
-      rafId = requestAnimationFrame(frame)
-    }
-
-    if (reduceMotion) {
-      if (onRenderFrameRef.current) {
-        onRenderFrameRef.current({
-          video,
-          section,
-          progress: 1,
-          timeSec: performance.now() * 0.001,
-          reducedMotion: true,
-        })
-      }
-    } else {
-      rafId = requestAnimationFrame(frame)
+      rafId = requestAnimationFrame(frame);
     }
 
     return () => {
-      video.removeEventListener("loadeddata", onLoadedData)
-      video.removeEventListener("seeked", onSeeked)
-      window.removeEventListener("wheel", onWheel)
-      window.removeEventListener("touchstart", onTouchStart)
-      window.removeEventListener("touchmove", onTouchMove)
-      section.removeEventListener("touchstart", onTouchStart, true)
-      section.removeEventListener("touchmove", onTouchMove, true)
-      window.removeEventListener("keydown", onKeyDown)
-      cancelAnimationFrame(rafId)
-      releaseLockRef.current = () => {}
-      releaseLock()
-    }
-  }, [scrubDistance, videoSrc, maxScale, taglineStart, taglineSpan, completionThreshold, skipLabel])
-
-  const usesCustomBackdrop = Boolean(backdropSlot || onRenderFrame)
+      video.removeEventListener('loadeddata', onLoadedData);
+      video.removeEventListener('loadedmetadata', onLoadedData);
+      video.removeEventListener('seeked', onSeeked);
+      window.removeEventListener('wheel', onWheel);
+      window.removeEventListener('touchstart', onTouchStart);
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('keydown', onWindowKeyDown);
+      section.removeEventListener('touchstart', onTouchStart, true);
+      section.removeEventListener('touchmove', onTouchMove, true);
+      cancelAnimationFrame(rafId);
+      releaseLock();
+    };
+  }, [scrubDistance, touchScrubDistance, unlockAfterEndPx, blobUrl]);
 
   return (
     <div
       ref={sectionRef}
-      className={`${className || ""}${exiting ? " is-exiting" : ""}`.trim()}
-      role={dialogRole ? "dialog" : undefined}
-      aria-modal={dialogRole ? true : undefined}
-      aria-labelledby={dialogRole ? "metro-hero-title" : undefined}
-      aria-describedby={dialogRole && tagline ? "metro-hero-tagline" : undefined}
+      tabIndex={-1}
+      className={className}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="moscow-intro-title"
+      aria-busy={ariaBusy}
+      onKeyDown={onKeyDown}
       style={{
-        position: "relative",
-        height: "100dvh",
-        width: "100%",
-        overflow: "hidden",
+        position: 'fixed',
+        inset: 0,
+        zIndex: 1000,
+        height: '100dvh',
+        width: '100%',
+        overflow: 'hidden',
         background: COL_BG,
-        touchAction: "none",
+        touchAction: 'none',
         ...style,
       }}
     >
       <video
         ref={videoRef}
-        src={videoSrc}
+        src={blobUrl || sourceUrl}
         poster={posterSrc}
         muted
         playsInline
         preload="auto"
         style={{
-          position: "absolute",
+          position: 'absolute',
           inset: 0,
-          width: "100%",
-          height: "100%",
-          objectFit: "cover",
-          opacity: usesCustomBackdrop ? 0 : ready ? 1 : 0,
-          transformOrigin: "center center",
-          willChange: "transform",
-          transition: "opacity 0.6s ease",
-          touchAction: "none",
-          pointerEvents: "none",
+          width: '100%',
+          height: '100%',
+          objectFit: 'cover',
+          opacity: ready ? 1 : 0.96,
+          transformOrigin: 'center center',
+          willChange: 'transform',
+          transition: 'opacity 0.6s ease',
+          touchAction: 'none',
+          pointerEvents: 'none',
         }}
       />
 
-      {backdropSlot}
-
       <div
-        className="metro-hero__vignette"
-        aria-hidden="true"
         style={{
-          position: "absolute",
+          position: 'absolute',
           inset: 0,
           background:
-            "linear-gradient(180deg, rgba(5,7,13,0.12), rgba(5,7,13,0) 32%, rgba(5,7,13,0.06) 72%, rgba(5,7,13,0.22))",
-          pointerEvents: "none",
+            'linear-gradient(180deg, rgba(16,11,8,0.35), rgba(16,11,8,0) 30%, rgba(16,11,8,0.15) 70%, rgba(16,11,8,0.55))',
+          pointerEvents: 'none',
         }}
       />
 
       <div
         ref={titleRef}
-        className="metro-hero__center"
         style={{
-          position: "absolute",
+          position: 'absolute',
           inset: 0,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "0 6%",
-          textAlign: "center",
-          pointerEvents: "none",
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '0 6%',
+          textAlign: 'center',
+          pointerEvents: 'none',
         }}
       >
-        {eyebrow && (
-          <span
-            className="metro-hero__eyebrow"
-            style={{
-              fontFamily: bodyFontFamily,
-              color: accentColor,
-            }}
-          >
-            {eyebrow}
-          </span>
-        )}
-        <h2
-          id="metro-hero-title"
-          className="metro-hero__title"
+        <h1
+          id="moscow-intro-title"
           style={{
             margin: 0,
-            fontFamily: titleFontFamily,
+            fontFamily: SANS,
             fontWeight: 800,
-            fontSize: "clamp(34px, 8vw, 112px)",
-            lineHeight: 0.98,
-            letterSpacing: "-0.025em",
-            color: "var(--portal-text, #dfd3c0)",
-            textShadow: "0 2px 18px rgba(0,0,0,0.85), 0 1px 3px rgba(0,0,0,0.92)",
-            display: "inline-block",
-            willChange: "transform, filter, opacity",
+            fontSize: 'clamp(30px, 7vw, 96px)',
+            lineHeight: 1,
+            letterSpacing: '-0.02em',
+            color: COL_TEXT,
+            textShadow: '0 4px 30px rgba(0,0,0,0.55)',
+            display: 'inline-block',
+            willChange: 'transform, filter, opacity',
           }}
         >
           {title}
-        </h2>
+        </h1>
       </div>
 
       {tagline && (
         <div
           ref={taglineRef}
-          id="metro-hero-tagline"
-          className="metro-hero__tagline"
           style={{
-            position: "absolute",
+            position: 'absolute',
             inset: 0,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "0 8%",
-            textAlign: "center",
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '0 8%',
+            textAlign: 'center',
             opacity: 0,
-            pointerEvents: "none",
+            pointerEvents: 'none',
           }}
         >
           <span
             style={{
-              fontFamily: titleFontFamily,
+              fontFamily: SANS,
               fontWeight: 700,
-              fontSize: "clamp(20px, 3.4vw, 40px)",
+              fontSize: 'clamp(20px, 3.4vw, 40px)',
               lineHeight: 1.2,
-              letterSpacing: "-0.01em",
-              color: "var(--portal-text, #dfd3c0)",
-              textShadow: "0 2px 18px rgba(0,0,0,0.85), 0 1px 3px rgba(0,0,0,0.92)",
+              letterSpacing: '-0.01em',
+              color: COL_TEXT,
+              textShadow: '0 4px 24px rgba(0,0,0,0.55)',
             }}
           >
             {tagline}
@@ -533,90 +460,70 @@ export default function MetroHero({
         </div>
       )}
 
-      {scrollHint && (
-        <div
-          ref={hintRef}
-          className="metro-hero__hint"
-          aria-hidden="true"
-          style={{
-            position: "absolute",
-            left: "50%",
-            bottom: skipLabel ? "clamp(72px, 11vh, 104px)" : "clamp(20px, 6vh, 48px)",
-            transform: "translateX(-50%)",
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            gap: 8,
-            color: accentColor,
-            fontFamily: bodyFontFamily,
-            fontSize: "clamp(10px, 1.4vw, 12px)",
-            fontWeight: 600,
-            letterSpacing: "0.3em",
-            transition: "opacity 0.4s ease",
-            pointerEvents: "none",
-          }}
-        >
-          <span>{scrollHint}</span>
-          <svg
-            width="14"
-            height="18"
-            viewBox="0 0 14 18"
-            style={{ animation: "metro-hero-bounce 1.6s ease-in-out infinite" }}
-          >
-            <style>{`
-              @keyframes metro-hero-bounce {
-                0%, 100% { transform: translateY(0); opacity: 0.5; }
-                50% { transform: translateY(5px); opacity: 1; }
-              }
-            `}</style>
-            <path
-              d="M7 1 L7 17 M2 12 L7 17 L12 12"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              fill="none"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </div>
-      )}
-
-      {skipLabel && onSkip && (
-        <button
-          ref={skipButtonRef}
-          type="button"
-          className="channel-portal__skip"
-          onClick={() => {
-            releaseLockRef.current()
-            onSkip()
-          }}
-        >
-          <span>{skipLabel}</span>
-          <span aria-hidden="true">↗</span>
-        </button>
-      )}
-
-      {/* Thin progress line — fills as the video and ASCII morph advance. */}
       <div
-        aria-hidden="true"
+        ref={hintRef}
         style={{
-          position: "absolute",
+          position: 'absolute',
+          left: '50%',
+          bottom: 'clamp(20px, 6vh, 48px)',
+          transform: 'translateX(-50%)',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 8,
+          color: 'rgba(239, 227, 210, 0.78)',
+          fontFamily: SANS,
+          fontSize: 'clamp(10px, 1.4vw, 12px)',
+          fontWeight: 600,
+          letterSpacing: '0.3em',
+          transition: 'opacity 0.4s ease',
+          pointerEvents: 'none',
+        }}
+      >
+        <span>{scrollHint}</span>
+        <svg
+          width="14"
+          height="18"
+          viewBox="0 0 14 18"
+          style={{ animation: 'metro-hero-bounce 1.6s ease-in-out infinite' }}
+        >
+          <style>{`
+            @keyframes metro-hero-bounce {
+              0%, 100% { transform: translateY(0); opacity: 0.5; }
+              50% { transform: translateY(5px); opacity: 1; }
+            }
+          `}</style>
+          <path
+            d="M7 1 L7 17 M2 12 L7 17 L12 12"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            fill="none"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </div>
+
+      {/* Thin progress line — fills as the video advances. */}
+      <div
+        style={{
+          position: 'absolute',
           left: 0,
           right: 0,
           bottom: 0,
-          height: 3,
-          background: "rgba(223,211,192,0.14)",
-          zIndex: 4,
+          height: 2,
+          background: 'rgba(239, 227, 210, 0.14)',
         }}
       >
         <div
           ref={progressBarRef}
           style={{
-            height: "100%",
-            width: "100%",
-            background: progressGradient,
-            transform: "scaleX(0)",
-            transformOrigin: "left center",
+            height: '100%',
+            width: '100%',
+            background:
+              'linear-gradient(90deg, rgba(231, 187, 148, 0.55), rgba(239, 227, 210, 0.96))',
+            transform: 'scaleX(0)',
+            transformOrigin: 'left center',
           }}
         />
       </div>
@@ -624,38 +531,40 @@ export default function MetroHero({
       {signature && (
         <span
           style={{
-            position: "absolute",
-            right: "clamp(12px, 2.5vw, 24px)",
-            bottom: "clamp(10px, 2vw, 18px)",
+            position: 'absolute',
+            right: 'clamp(12px, 2.5vw, 24px)',
+            bottom: 'clamp(10px, 2vw, 18px)',
             fontFamily: SANS,
             fontWeight: 500,
-            fontSize: "clamp(11px, 1.4vw, 13px)",
-            letterSpacing: "0.01em",
-            color: "rgba(223,211,192,0.62)",
+            fontSize: 'clamp(11px, 1.4vw, 13px)',
+            letterSpacing: '0.01em',
+            color: 'rgba(223, 211, 192, 0.6)',
             zIndex: 2,
           }}
         >
-          by{" "}
+          by{' '}
           <a
             href={signature.url}
             target="_blank"
             rel="noopener noreferrer"
             style={{
-              color: "rgba(223,211,192,0.62)",
-              textDecoration: "none",
-              transition: "color 0.2s ease",
+              color: 'rgba(223, 211, 192, 0.6)',
+              textDecoration: 'none',
+              transition: 'color 0.2s ease',
             }}
             onMouseEnter={(e: React.MouseEvent<HTMLAnchorElement>) => {
-              e.currentTarget.style.color = COL_TEXT
+              e.currentTarget.style.color = COL_TEXT;
             }}
             onMouseLeave={(e: React.MouseEvent<HTMLAnchorElement>) => {
-              e.currentTarget.style.color = "rgba(223,211,192,0.62)"
+              e.currentTarget.style.color = 'rgba(223, 211, 192, 0.6)';
             }}
           >
             {signature.name}
           </a>
         </span>
       )}
+
+      {children}
     </div>
-  )
+  );
 }

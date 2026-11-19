@@ -99,6 +99,72 @@
         }
       },
       "faststart": true
+    },
+    {
+      "file": "metro-entry-poster.jpg",
+      "bytes": 109813,
+      "sha256": "76e97ab150a2dd9de68fc0de6779023382335c2c79f9706cff2dbdb67f0de09c",
+      "probe": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "mjpeg",
+            "width": 1280,
+            "height": 720,
+            "avg_frame_rate": "25/1"
+          }
+        ],
+        "format": {
+          "duration": "0.040000",
+          "size": "109813"
+        }
+      },
+      "faststart": null
+    },
+    {
+      "file": "metro-entry-mobile.mp4",
+      "bytes": 3168458,
+      "sha256": "ebce1fee1d611966325372a7d13c06e453bec6df82ad3fa4678c49589ef27888",
+      "probe": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "h264",
+            "width": 768,
+            "height": 432,
+            "avg_frame_rate": "24/1"
+          }
+        ],
+        "format": {
+          "duration": "8.000000",
+          "size": "3168458"
+        }
+      },
+      "faststart": true
+    },
+    {
+      "file": "metro-entry.mp4",
+      "bytes": 7055707,
+      "sha256": "42a7bc858d06b2d47ca723eea4f7b498b5623c3fe5479f85c8922330f0c03b4a",
+      "probe": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "h264",
+            "width": 1280,
+            "height": 720,
+            "avg_frame_rate": "24/1"
+          }
+        ],
+        "format": {
+          "duration": "8.000000",
+          "size": "7055707"
+        }
+      },
+      "faststart": true
     }
   ]
 }

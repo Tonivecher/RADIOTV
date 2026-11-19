@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { RadioMark } from './RadioMark';
+import { useReducedMotion } from 'framer-motion';
 import { useSpatialMotion } from './SpatialMotion';
+import MetroHero from './ui/scroll-locked-video-hero';
 import '../styles/boot-preloader.css';
 
 interface BootPreloaderProps {
@@ -19,7 +19,6 @@ interface BootPreloaderProps {
 }
 
 const POSTER = '/media/evening-poster.jpg';
-const GATE_EASE = [0.76, 0, 0.24, 1] as const;
 
 export function BootPreloader({
   isStateLoaded,
@@ -39,21 +38,18 @@ export function BootPreloader({
   const [posterReady, setPosterReady] = useState(false);
   const [posterError, setPosterError] = useState('');
   const [posterRetry, setPosterRetry] = useState(0);
-  const [phase, setPhase] = useState<'closed' | 'fading' | 'opening'>('closed');
+  const [phase, setPhase] = useState<'closed' | 'opening'>('closed');
   const [starting, setStarting] = useState(false);
   const [entryError, setEntryError] = useState('');
 
-  const dialog = useRef<HTMLDivElement>(null);
   const primaryButton = useRef<HTMLButtonElement>(null);
   const entering = useRef(false);
   const revealed = useRef(false);
   const completed = useRef(false);
-  const reducedMotion = useReducedMotion();
-  const { prepareSensorPermission } = useSpatialMotion();
+  const readyRef = useRef(false);
 
-  useEffect(() => {
-    dialog.current?.focus();
-  }, []);
+  const reducedMotion = Boolean(useReducedMotion());
+  const { prepareSensorPermission } = useSpatialMotion();
 
   useEffect(() => {
     let active = true;
@@ -105,15 +101,14 @@ export function BootPreloader({
           link.media = 'all';
         }
 
-        // WebKit can expose the stylesheet before registering its font faces.
-        // Retry the real readiness check briefly; never treat fallback fonts as ready.
         let loaded = false;
         for (let attempt = 0; attempt < 4 && active; attempt++) {
           await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
           await document.fonts.ready;
           try {
             const faces = await Promise.all([
-              document.fonts.load('400 24px "Plus Jakarta Sans"', 'ToniVecherRadio'),
+              document.fonts.load('400 24px Manrope', 'ToniVecherRadio Основной'),
+              document.fonts.load('500 24px Manrope', 'Настройте звук'),
               document.fonts.load('400 16px Inter', 'Музыка на вечер Deep'),
               document.fonts.load('500 16px Inter', 'Эфир'),
               document.fonts.load('600 16px Inter', 'Слушать'),
@@ -208,58 +203,50 @@ export function BootPreloader({
   ];
   const error = errorText || fontError || posterError;
   const ready = resources.every((item) => item.ready) && !error;
+  readyRef.current = ready;
   const busy = starting || phase !== 'closed';
   const completedCount = resources.filter((item) => item.ready).length;
+  const loadPct = Math.round((completedCount / 3) * 100);
 
-  useEffect(() => {
-    if (ready && !entering.current && dialog.current?.contains(document.activeElement)) {
-      dialog.current.focus();
-      primaryButton.current?.focus();
+  const finishUnmount = () => {
+    if (completed.current) return;
+    completed.current = true;
+    if (!revealed.current) {
+      revealed.current = true;
+      onReveal?.();
     }
-  }, [ready]);
+    onComplete?.();
+  };
 
-  const enter = async (withSound: boolean) => {
-    if (!ready || entering.current) {
+  const enter = async (withSound: boolean, fromScroll = false) => {
+    if (!readyRef.current || entering.current) {
       return;
     }
     entering.current = true;
     setStarting(true);
     setEntryError('');
     try {
-      // Invoke before the first await: Safari must receive play/resume in this tap.
       const acceptance = onEnterEther(withSound);
       prepareSensorPermission();
-      const accepted = await acceptance;
+      let accepted = await acceptance;
+      if (accepted === false && fromScroll && withSound) {
+        accepted = await onEnterEther(false);
+      }
       if (accepted === false) {
         throw new Error('Playback not ready');
       }
-      dialog.current?.focus();
-      setPhase('fading');
+      if (!revealed.current) {
+        revealed.current = true;
+        onReveal?.();
+      }
+      setPhase('opening');
+      window.setTimeout(finishUnmount, reducedMotion ? 80 : 380);
     } catch {
       entering.current = false;
-      setEntryError(
-        'Звук пока не запустился. Нажмите «Войти со звуком» ещё раз или войдите без звука.'
-      );
+      setEntryError('Нажмите «Войти со звуком» или «Войти тихо».');
     } finally {
       setStarting(false);
     }
-  };
-
-  const reveal = () => {
-    if (phase !== 'fading' || revealed.current) {
-      return;
-    }
-    revealed.current = true;
-    onReveal?.();
-    setPhase('opening');
-  };
-
-  const complete = () => {
-    if (phase !== 'opening' || completed.current) {
-      return;
-    }
-    completed.current = true;
-    onComplete?.();
   };
 
   const handleDialogKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -291,223 +278,84 @@ export function BootPreloader({
     }
   };
 
-  const gateTransition = {
-    duration: reducedMotion ? 0.12 : 1.2,
-    ease: GATE_EASE,
-    opacity: {
-      duration: reducedMotion ? 0.12 : 1.2,
-      ease: [0.4, 0, 0.2, 1] as const,
-    },
-  };
-
   return createPortal(
-    <div
-      ref={dialog}
-      tabIndex={-1}
+    <MetroHero
       className={`moscow-intro moscow-intro--${phase}`}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="moscow-intro-title"
-      aria-describedby="moscow-intro-description"
-      aria-busy={!ready || busy}
+      title="ВЕЧЕР ОТКРЫВАЕТСЯ"
+      scrollHint={ready ? 'СКРОЛЛ' : `ЗАГРУЗКА ${loadPct}%`}
+      tagline="Каждая дверь в вечерний эфир уже открыта."
+      canUnlock={ready}
+      fastForward={phase === 'opening'}
+      onUnlock={() => void enter(true, true)}
       onKeyDown={handleDialogKeyDown}
+      ariaBusy={!ready || busy}
     >
-      <div className="moscow-intro__gates" aria-hidden="true">
-        <motion.div
-          className="moscow-intro__gate moscow-intro__gate--left"
-          initial={false}
-          animate={{
-            x: phase === 'opening' && !reducedMotion ? '-100%' : 0,
-            opacity: phase === 'opening' ? 0 : 1,
-            scale: phase === 'opening' && !reducedMotion ? 1.025 : 1,
-          }}
-          transition={gateTransition}
-        >
-          <div className="moscow-intro__city" />
-        </motion.div>
-        <motion.div
-          className="moscow-intro__gate moscow-intro__gate--right"
-          initial={false}
-          animate={{
-            x: phase === 'opening' && !reducedMotion ? '100%' : 0,
-            opacity: phase === 'opening' ? 0 : 1,
-            scale: phase === 'opening' && !reducedMotion ? 1.025 : 1,
-          }}
-          transition={gateTransition}
-          onAnimationComplete={complete}
-        >
-          <div className="moscow-intro__city" />
-        </motion.div>
+      {/* Hidden/accessible progressbar for screen readers & tests */}
+      <div
+        className="moscow-intro__sr-only"
+        role="progressbar"
+        aria-label="Готовность радио"
+        aria-valuemin={0}
+        aria-valuemax={3}
+        aria-valuenow={completedCount}
+      />
+
+      {/* Discreet bottom-left corner controls matching the bottom-right signature */}
+      <div className="moscow-intro__corner-actions">
+        {ready ? (
+          <>
+            <button
+              ref={primaryButton}
+              type="button"
+              className="moscow-intro__primary"
+              disabled={busy}
+              onClick={() => void enter(true, false)}
+            >
+              Войти со звуком ↗
+            </button>
+            <span className="moscow-intro__corner-sep" aria-hidden="true">
+              ·
+            </span>
+            <button
+              type="button"
+              className="moscow-intro__secondary"
+              disabled={busy}
+              onClick={() => void enter(false, false)}
+            >
+              Войти без звука
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            className="moscow-intro__prepare"
+            disabled={busy}
+            onClick={onPrepare}
+          >
+            {needsGesture ? 'Нажмите, чтобы подготовить радио' : `Готовим эфир · ${loadPct}%`}
+          </button>
+        )}
       </div>
 
-      <motion.div
-        className="moscow-intro__content"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: phase !== 'closed' ? 0 : 1 }}
-        transition={{
-          duration: reducedMotion ? 0 : phase !== 'closed' ? 0.22 : 0.6,
-          ease: 'easeOut',
-        }}
-        onAnimationComplete={reveal}
-      >
-        <header className="moscow-intro__header">
-          <RadioMark size={30} />
-          <span>ToniVecherRadio</span>
-          <span className="moscow-intro__location">Москва · вечерний эфир</span>
-        </header>
-
-        <main className="moscow-intro__center">
-          <span className="moscow-intro__eyebrow">Музыка на вечер</span>
-          <h1 id="moscow-intro-title" className="moscow-intro__title">
-            ToniVecherRadio
-          </h1>
-          <p id="moscow-intro-description" className="moscow-intro__description">
-            Deep-tech, tech и deep.
-            <br />
-            Выберите, как войти в эфир.
-          </p>
-
-          <div
-            className={`moscow-intro__loader${ready ? ' is-ready' : ''}`}
-            aria-hidden="true"
-          >
-            <span />
-            <span />
-            <span />
-            <span />
-            <span />
-          </div>
-
-          <div className="moscow-intro__resources" aria-live="polite" aria-atomic="true">
-            <p className="moscow-intro__status">
-              {starting
-                ? 'Запускаем звук'
-                : busy
-                  ? 'Открываем эфир'
-                  : ready
-                    ? 'Всё готово. Добро пожаловать.'
-                    : 'Готовим радио'}
-            </p>
-            <div className="moscow-intro__resource-items">
-              {resources.map((item) => (
-                <span key={item.label} className={item.ready ? 'is-ready' : ''}>
-                  <i aria-hidden="true" />
-                  {item.label}
-                  <small>{item.ready ? 'Готово' : 'Загружаем'}</small>
-                </span>
-              ))}
-            </div>
-          </div>
-
-          <div
-            className="moscow-intro__progress"
-            role="progressbar"
-            aria-label="Готовность радио"
-            aria-valuemin={0}
-            aria-valuemax={3}
-            aria-valuenow={completedCount}
-          >
-            <span style={{ transform: `scaleX(${completedCount / 3})` }} />
-          </div>
-
+      {(error || entryError) && (
+        <div className="moscow-intro__error" role="alert">
+          <p>{error || entryError}</p>
           {error && (
-            <div className="moscow-intro__error" role="alert">
-              <p>{error}</p>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => {
-                  if (!fontsReady) {
-                    setFontRetry((v) => v + 1);
-                  }
-                  if (!posterReady) {
-                    setPosterRetry((v) => v + 1);
-                  }
-                  onRetry();
-                }}
-              >
-                Повторить загрузку
-              </button>
-            </div>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                if (!fontsReady) setFontRetry((v) => v + 1);
+                if (!posterReady) setPosterRetry((v) => v + 1);
+                onRetry();
+              }}
+            >
+              Повторить загрузку
+            </button>
           )}
-
-          {entryError && !error && (
-            <div className="moscow-intro__error" role="alert">
-              <p>{entryError}</p>
-            </div>
-          )}
-
-          <AnimatePresence
-            initial={false}
-            mode="wait"
-            onExitComplete={() => {
-              if (!busy && document.activeElement === document.body) {
-                dialog.current?.focus();
-              }
-            }}
-          >
-            {ready ? (
-              <motion.div
-                key="entry"
-                className="moscow-intro__actions"
-                initial={{ opacity: 0, y: reducedMotion ? 0 : 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: reducedMotion ? 0 : -4 }}
-                transition={{ duration: reducedMotion ? 0 : 0.25, ease: 'easeOut' }}
-                onAnimationComplete={() => {
-                  if (!busy && document.activeElement === dialog.current) {
-                    primaryButton.current?.focus();
-                  }
-                }}
-              >
-                <button
-                  ref={primaryButton}
-                  type="button"
-                  className="moscow-intro__primary"
-                  disabled={busy}
-                  onClick={() => enter(true)}
-                >
-                  {busy ? 'Открываем эфир' : 'Войти со звуком'}
-                  <span aria-hidden="true">↗</span>
-                </button>
-                <button
-                  type="button"
-                  className="moscow-intro__secondary"
-                  disabled={busy}
-                  onClick={() => enter(false)}
-                >
-                  Войти без звука
-                </button>
-              </motion.div>
-            ) : (
-              <motion.div
-                key="prepare"
-                initial={{ opacity: 0, y: reducedMotion ? 0 : 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: reducedMotion ? 0 : -4 }}
-                transition={{ duration: reducedMotion ? 0 : 0.2, ease: 'easeOut' }}
-              >
-                <button
-                  className="moscow-intro__prepare"
-                  type="button"
-                  disabled={busy}
-                  onClick={onPrepare}
-                >
-                  {needsGesture
-                    ? 'Нажмите, чтобы подготовить радио'
-                    : 'Подготовить радио'}
-                </button>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </main>
-
-        <footer className="moscow-intro__footer">
-          <span>Независимое интернет-радио</span>
-          <span>Три канала без треклиста</span>
-        </footer>
-      </motion.div>
-    </div>,
+        </div>
+      )}
+    </MetroHero>,
     document.body
   );
 }
