@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { SyncSnapshot } from '../audio/liveSync';
+import { CHANNEL_GENRE_TAGS } from '../constants/radio';
 import { ReactionKind, WaveformMoment } from '../types/radio';
 import { SyncView } from '../utils/radioState';
 import {
@@ -11,8 +12,14 @@ import {
 } from './icons/RadioIcons';
 import { FloatPanel } from './SpatialMotion';
 import { WaveformTimeline } from './WaveformTimeline';
+import { AttractPlayButton } from './living/AttractPlayButton';
+import { DecodeText } from './living/DecodeText';
+import { GlitchText } from './living/GlitchText';
+import { RollingNumber } from './living/RollingNumber';
+import { SlideLabel } from './living/SlideLabel';
 
 interface HeroTransportStageProps {
+  channelId: string;
   isStateLoaded: boolean;
   stateError: string;
   audioError: string;
@@ -36,6 +43,7 @@ interface HeroTransportStageProps {
 }
 
 export const HeroTransportStage: React.FC<HeroTransportStageProps> = ({
+  channelId,
   isStateLoaded,
   stateError,
   audioError,
@@ -57,7 +65,26 @@ export const HeroTransportStage: React.FC<HeroTransportStageProps> = ({
   onLikeMoment,
   renderReactionIcon,
 }) => {
-  const reducedMotion = useReducedMotion();
+  const reducedMotion = Boolean(useReducedMotion());
+  const genreTags = CHANNEL_GENRE_TAGS[channelId] || CHANNEL_GENRE_TAGS['ch-main'];
+  const [rotator, setRotator] = useState(() => ({ channelId, index: 0 }));
+  const activeTagIndex = rotator.channelId === channelId ? rotator.index % genreTags.length : 0;
+  const activeGenreTag = genreTags[activeTagIndex] || genreTags[0];
+
+  useEffect(() => {
+    setRotator({ channelId, index: 0 });
+    if (reducedMotion || genreTags.length <= 1) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      if (document.hidden) return;
+      setRotator((prev) => ({
+        channelId,
+        index: prev.channelId === channelId ? (prev.index + 1) % genreTags.length : 0,
+      }));
+    }, 3600);
+    return () => window.clearInterval(timer);
+  }, [channelId, reducedMotion, genreTags.length]);
 
   const updateVolumeFromClientX = (el: HTMLDivElement, clientX: number) => {
     const rect = el.getBoundingClientRect();
@@ -74,19 +101,45 @@ export const HeroTransportStage: React.FC<HeroTransportStageProps> = ({
 
   return (
     <motion.section
-      initial={{ opacity: 0, y: reducedMotion ? 0 : 16 }}
+      initial={{ opacity: 0, y: reducedMotion ? 0 : 18 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, amount: 0.05 }}
-      transition={{ duration: 0.7 }}
+      transition={{ duration: 0.85, ease: [0.22, 1, 0.36, 1] }}
       id="ether-stage"
       className="scroll-reveal-section is-inview hero-stage-section"
       aria-label="Прямой эфир и интерактивная аудиоволна"
     >
+      <div className="hero-lamp-spotlight" aria-hidden="true">
+        <div className="hero-lamp-spotlight__cones">
+          <motion.div
+            className="hero-lamp-spotlight__wing hero-lamp-spotlight__wing--left"
+            initial={reducedMotion ? false : { opacity: 0.4, scaleX: 0.72 }}
+            animate={{ opacity: 0.72, scaleX: 1 }}
+            transition={{ duration: reducedMotion ? 0 : 0.85, ease: 'easeOut' }}
+            style={{ transformOrigin: 'right top' }}
+          />
+          <motion.div
+            className="hero-lamp-spotlight__wing hero-lamp-spotlight__wing--right"
+            initial={reducedMotion ? false : { opacity: 0.4, scaleX: 0.72 }}
+            animate={{ opacity: 0.72, scaleX: 1 }}
+            transition={{ duration: reducedMotion ? 0 : 0.85, ease: 'easeOut' }}
+            style={{ transformOrigin: 'left top' }}
+          />
+          <div className="hero-lamp-spotlight__glow" />
+        </div>
+        <motion.div
+          className="hero-lamp-spotlight__bar"
+          initial={reducedMotion ? false : { opacity: 0.5, scaleX: 0.55 }}
+          animate={{ opacity: 1, scaleX: 1 }}
+          transition={{ duration: reducedMotion ? 0 : 0.75, ease: 'easeOut' }}
+        />
+      </div>
+
       <motion.div
         className="hero-editorial-grid"
-        initial={{ opacity: 0, y: reducedMotion ? 0 : 22 }}
+        initial={{ opacity: 0, y: reducedMotion ? 0 : 18 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.8, delay: 0.25 }}
+        transition={{ duration: 0.9, delay: 0.12, ease: [0.22, 1, 0.36, 1] }}
       >
         <FloatPanel className="hero-title-region" depth={0.9}>
           <div className="hero-editorial-grid__left">
@@ -97,19 +150,19 @@ export const HeroTransportStage: React.FC<HeroTransportStageProps> = ({
               </span>
               <span>{isStateLoaded ? 'Прямой эфир' : 'Подключаемся к эфиру'}</span>
               <span className="hero-eyebrow-sep">/</span>
-              <span>deep-tech · tech · deep</span>
+              <span className="hero-eyebrow-tag-slot">
+                <DecodeText text={activeGenreTag} className="hero-eyebrow-tag" />
+              </span>
             </div>
-            <h1
+            <GlitchText
+              as="h1"
+              text="ToniVecherRadio"
+              trigger="both"
+              intensity="subtle"
+              interactiveShadow
               className="hero-display-title"
-              style={{
-                fontFamily: "'Plus Jakarta Sans', 'Inter', sans-serif",
-                fontWeight: 400,
-                letterSpacing: '-0.055em',
-              }}
-            >
-              ToniVecherRadio
-            </h1>
-            <p className="hero-lead-copy" style={{ fontFamily: "'Inter', sans-serif" }}>
+            />
+            <p className="hero-lead-copy">
               Выбирайте канал и слушайте вместе.
               Отмечайте любимые моменты прямо на волне.
             </p>
@@ -132,7 +185,7 @@ export const HeroTransportStage: React.FC<HeroTransportStageProps> = ({
           </div>
         </FloatPanel>
 
-        {/* Right: Magnetic Transport Cluster & Custom Glass Volume Ribbon */}
+        {/* Right: Magnetic Attract Transport Cluster & Custom Glass Volume Ribbon */}
         <FloatPanel className="hero-control-region" depth={0.7}>
           <div className="hero-transport-cluster">
             <div className={`sync-chip is-${syncView.tone}`} data-sync-state={syncSnapshot.state}>
@@ -140,19 +193,16 @@ export const HeroTransportStage: React.FC<HeroTransportStageProps> = ({
               <span className="sync-chip__text" aria-hidden="true">
                 {syncView.label}
               </span>
-              {/* Screen readers get the state only, not every 0.1 s drift tick */}
               <span className="visually-hidden" role="status" aria-live="polite">
                 {syncView.announce}
               </span>
             </div>
 
-            <motion.button
-              whileHover={{ scale: reducedMotion ? 1 : 1.03 }}
-              whileTap={{ scale: reducedMotion ? 1 : 0.97 }}
-              type="button"
-              className={`magnetic-cta magnetic-cta--hero ${isPlaying ? 'is-playing' : ''}`}
+            <AttractPlayButton
+              isPlaying={isPlaying}
               onClick={onTogglePlay}
-              aria-label={isPlaying ? 'Пауза эфира' : 'Слушать радио'}
+              className={`magnetic-cta magnetic-cta--hero ${isPlaying ? 'is-playing' : ''}`}
+              ariaLabel={isPlaying ? 'Пауза эфира' : 'Слушать радио'}
             >
               <span className="magnetic-cta__halo" aria-hidden="true" />
               <AnimatePresence mode="wait" initial={false}>
@@ -173,20 +223,21 @@ export const HeroTransportStage: React.FC<HeroTransportStageProps> = ({
                   </span>
                 </motion.span>
               </AnimatePresence>
-            </motion.button>
+            </AttractPlayButton>
 
             <div className="hero-secondary-controls">
               <button
                 type="button"
-                className="glass-pill-btn"
+                className="glass-pill-btn living-hover-btn"
                 onClick={onResyncLive}
                 title="Вернуться к текущему моменту эфира"
               >
-                <ResyncLiveIcon size={15} />
-                <span>К эфиру</span>
+                <span className="living-icon-wiggle">
+                  <ResyncLiveIcon size={15} />
+                </span>
+                <SlideLabel text="К эфиру" />
               </button>
 
-              {/* Custom Pointer-Captured Glass Volume Ribbon (Zero browser range inputs!) */}
               <div className="glass-volume-control">
                 <VolumeDspIcon size={16} />
                 <div
@@ -229,14 +280,15 @@ export const HeroTransportStage: React.FC<HeroTransportStageProps> = ({
                     style={{ left: `calc(${masterGain}% - 6px)` }}
                   />
                 </div>
-                <span className="glass-volume-val">{masterGain}%</span>
+                <span className="glass-volume-val">
+                  <RollingNumber value={`${masterGain}%`} />
+                </span>
               </div>
             </div>
           </div>
         </FloatPanel>
       </motion.div>
 
-      {/* Double-Bezel Liquid Glass SoundCloud-Pro Waveform Stage */}
       <WaveformTimeline
         peaks={peaks}
         heatmap={heatmap}

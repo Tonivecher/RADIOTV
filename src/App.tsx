@@ -25,6 +25,8 @@ import {
   SpatialMotionProvider,
 } from './components/SpatialMotion';
 import { StationWordmark } from './components/StationWordmark';
+import { SlideLabel } from './components/living/SlideLabel';
+import { updateReactiveAudioState } from './audio/reactiveTelemetry';
 import { resolveThemeForChannel } from './constants/ascii';
 import { CHANNEL_COPY, REACTION_TO_ICON } from './constants/radio';
 import { useAudioTransport } from './hooks/useAudioTransport';
@@ -42,6 +44,7 @@ export const App: React.FC = () => {
   const [showBootloader, setShowBootloader] = useState(true);
   const [bootRevealed, setBootRevealed] = useState(false);
   const [portalTransition, setPortalTransition] = useState<ChannelTransition | null>(null);
+  const portalNonceRef = useRef(0);
   const bootVisibleRef = useRef(true);
   const enteredRef = useRef(false);
   bootVisibleRef.current = showBootloader && !enteredRef.current;
@@ -87,6 +90,23 @@ export const App: React.FC = () => {
 
   const theme = resolveThemeForChannel(radioLive.channelId);
 
+  // Keep reactive audio telemetry synced for background ASCII, waveform & dot matrix
+  useEffect(() => {
+    updateReactiveAudioState({
+      isPlaying: transport.isPlaying,
+      channelId: radioLive.channelId,
+      positionSec: radioLive.livePositionSec,
+      durationSec: radioLive.radioState.broadcast.durationSec,
+      peaks: radioLive.radioState.peaks,
+    });
+  }, [
+    transport.isPlaying,
+    radioLive.channelId,
+    radioLive.livePositionSec,
+    radioLive.radioState.broadcast.durationSec,
+    radioLive.radioState.peaks,
+  ]);
+
   // Every channel switch updates transport flags before React swaps <audio src>
   const selectChannel = useCallback(
     (next: string) => {
@@ -95,7 +115,12 @@ export const App: React.FC = () => {
         return;
       }
       if (!showBootloader) {
-        setPortalTransition({ fromChannelId: previous, toChannelId: next });
+        portalNonceRef.current += 1;
+        setPortalTransition({
+          fromChannelId: previous,
+          toChannelId: next,
+          nonce: portalNonceRef.current,
+        });
       } else {
         setPortalTransition(null);
       }
@@ -302,9 +327,9 @@ export const App: React.FC = () => {
           <EveningBackground
             ref={backgroundRef}
             channelId={radioLive.channelId}
-            portalActive={Boolean(portalTransition)}
+            portalActive={false}
             retry={videoRetry}
-            showControls={!showBootloader && !radioSession.authModalOpen && !portalTransition}
+            showControls={!showBootloader && !radioSession.authModalOpen}
             controlsHost={videoControlsHost}
             onMediaChange={setBgMedia}
             onReady={() => {
@@ -315,17 +340,30 @@ export const App: React.FC = () => {
             onNeedsGesture={() => transport.setNeedsGesture(true)}
           />
 
-          {/* Hidden HTML5 Live Stream Audio Element (Anonymous stream URL, zero track metadata) */}
+          {/* Primary clean native <audio> element (never bound to AudioContext -> iOS Lock Screen safe) */}
           <audio
             ref={transport.audioRef}
             src={transport.audioSource}
             preload="auto"
-            crossOrigin="anonymous"
+            playsInline
             onLoadedMetadata={transport.handleAudioLoadedMetadata}
-            onPlay={transport.handleAudioPlay}
-            onPause={transport.handleAudioPause}
-            onError={transport.handleAudioError}
-            onEnded={transport.handleAudioEnded}
+            onPlay={() => transport.handleAudioPlay('direct')}
+            onPause={() => transport.handleAudioPause('direct')}
+            onError={() => transport.handleAudioError('direct')}
+            onEnded={() => transport.handleAudioEnded('direct')}
+          />
+
+          {/* Secondary DSP <audio> element (only armed in foreground when EQ/DSP processing is enabled) */}
+          <audio
+            ref={transport.dspAudioRef}
+            src={transport.dspAudioSource}
+            preload="none"
+            playsInline
+            crossOrigin="anonymous"
+            onPlay={() => transport.handleAudioPlay('dsp')}
+            onPause={() => transport.handleAudioPause('dsp')}
+            onError={() => transport.handleAudioError('dsp')}
+            onEnded={() => transport.handleAudioEnded('dsp')}
           />
 
           {/* Fullscreen Multi-Stage Boot Preloader */}
@@ -348,9 +386,9 @@ export const App: React.FC = () => {
             ref={contentRef}
             className="radio-content"
             data-boot-hidden={showBootloader && !bootRevealed ? true : undefined}
-            inert={showBootloader || radioSession.authModalOpen || Boolean(portalTransition)}
+            inert={showBootloader || radioSession.authModalOpen}
             aria-hidden={
-              showBootloader || radioSession.authModalOpen || Boolean(portalTransition)
+              showBootloader || radioSession.authModalOpen
                 ? true
                 : undefined
             }
@@ -371,27 +409,42 @@ export const App: React.FC = () => {
                   </div>
                 </div>
 
-                {/* 3 Live Broadcast Channels */}
+                {/* 3 Live Broadcast Channels with Smooth Spring-Gliding Active Pill */}
                 <nav className="island-channels" aria-label="Каналы радиоэфира">
                   {radioLive.radioState.channels.length === 0 && (
                     <span className="island-channel-loading">
                       {radioLive.stateError ? 'Каналы недоступны' : 'Загружаем каналы…'}
                     </span>
                   )}
-                  {radioLive.radioState.channels.map((ch) => (
-                    <button
-                      key={ch.id}
-                      type="button"
-                      className={`island-channel-btn ${
-                        radioLive.channelId === ch.id ? 'is-active' : ''
-                      }`}
-                      onClick={() => selectChannel(ch.id)}
-                      aria-pressed={radioLive.channelId === ch.id}
-                    >
-                      <LiveBeaconIcon size={14} />
-                      <span>{CHANNEL_COPY[ch.id]?.name || ch.name}</span>
-                    </button>
-                  ))}
+                  {radioLive.radioState.channels.map((ch) => {
+                    const isActive = radioLive.channelId === ch.id;
+                    return (
+                      <button
+                        key={ch.id}
+                        type="button"
+                        className={`island-channel-btn ${isActive ? 'is-active' : ''}`}
+                        onClick={() => selectChannel(ch.id)}
+                        aria-pressed={isActive}
+                      >
+                        {isActive && (
+                          <motion.span
+                            layoutId="header-channel-pill"
+                            className="island-channel-btn__pill"
+                            transition={
+                              reducedMotion
+                                ? { duration: 0 }
+                                : { type: 'spring', stiffness: 440, damping: 34 }
+                            }
+                            aria-hidden="true"
+                          />
+                        )}
+                        <span className="island-channel-btn__content">
+                          <LiveBeaconIcon size={14} />
+                          <span>{CHANNEL_COPY[ch.id]?.name || ch.name}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
                 </nav>
 
                 {/* Glass Controls + Showcase Links */}
@@ -399,21 +452,21 @@ export const App: React.FC = () => {
                   <div ref={setVideoControlsHost} className="island-video-control" />
                   <BackgroundMotionControl />
                   <div className="island-links">
-                    <a href="#dsp-stage" className="island-link">
-                      Звук
+                    <a href="#dsp-stage" className="island-link living-hover-btn">
+                      <SlideLabel text="Звук" />
                     </a>
-                    <a href="#lounge-stage" className="island-link">
-                      Каналы
+                    <a href="#lounge-stage" className="island-link living-hover-btn">
+                      <SlideLabel text="Каналы" />
                     </a>
                     <button
                       type="button"
-                      className="island-link"
+                      className="island-link living-hover-btn"
                       onClick={() => {
                         setBootRevealed(false);
                         setShowBootloader(true);
                       }}
                     >
-                      О радио
+                      <SlideLabel text="О радио" />
                     </button>
                   </div>
                 </div>
@@ -423,6 +476,7 @@ export const App: React.FC = () => {
             {/* Main Scroll-Choreographed Spatial Experience */}
             <main className="spatial-main">
               <HeroTransportStage
+                channelId={radioLive.channelId}
                 isStateLoaded={radioLive.isStateLoaded}
                 stateError={radioLive.stateError}
                 audioError={transport.audioError}
@@ -447,10 +501,10 @@ export const App: React.FC = () => {
 
               {/* SECTION 02: SCROLL-REVEALED 10-BAND SPATIAL DSP CONSOLE */}
               <motion.section
-                initial={{ opacity: 0, y: reducedMotion ? 0 : 16 }}
+                initial={{ opacity: 0, y: reducedMotion ? 0 : 20 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true, amount: 0.05 }}
-                transition={{ duration: 0.7 }}
+                transition={{ duration: 0.85, ease: [0.22, 1, 0.36, 1] }}
                 id="dsp-stage"
                 className="scroll-reveal-section dsp-stage-section"
                 aria-label="Настройка звука"
@@ -524,11 +578,6 @@ export const App: React.FC = () => {
             posterUrl={bgMedia.posterUrl}
             onComplete={() => {
               setPortalTransition(null);
-              requestAnimationFrame(() =>
-                contentRef.current
-                  ?.querySelector<HTMLButtonElement>('.magnetic-cta--hero')
-                  ?.focus({ preventScroll: true })
-              );
             }}
           />
         </div>

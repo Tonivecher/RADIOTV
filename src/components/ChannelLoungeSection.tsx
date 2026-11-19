@@ -2,8 +2,10 @@ import React from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { CHANNEL_COPY } from '../constants/radio';
 import { RadioChannelInfo } from '../types/radio';
-import { BlindMaskIcon } from './icons/RadioIcons';
+import { RadioWavePaths } from './RadioWavePaths';
 import { FloatPanel } from './SpatialMotion';
+import { InteractiveNote } from './living/InteractiveNote';
+import { SlideLabel } from './living/SlideLabel';
 
 interface ChannelLoungeSectionProps {
   channels: RadioChannelInfo[];
@@ -18,20 +20,30 @@ export const ChannelLoungeSection: React.FC<ChannelLoungeSectionProps> = ({
   onSelectChannel,
   children,
 }) => {
-  const reducedMotion = useReducedMotion();
+  const reducedMotion = Boolean(useReducedMotion());
+
+  const handleRowPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (reducedMotion || e.pointerType === 'touch') return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const mx = ((e.clientX - rect.left) / Math.max(1, rect.width)) * 100;
+    const my = ((e.clientY - rect.top) / Math.max(1, rect.height)) * 100;
+    e.currentTarget.style.setProperty('--mx', `${mx.toFixed(1)}%`);
+    e.currentTarget.style.setProperty('--my', `${my.toFixed(1)}%`);
+  };
 
   return (
     <motion.section
-      initial={{ opacity: 0, y: reducedMotion ? 0 : 16 }}
+      initial={{ opacity: 0, y: reducedMotion ? 0 : 20 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, amount: 0.05 }}
-      transition={{ duration: 0.7 }}
+      transition={{ duration: 0.85, ease: [0.22, 1, 0.36, 1] }}
       id="lounge-stage"
       className="scroll-reveal-section lounge-stage-section"
       aria-label="Выбор канала"
     >
+      <RadioWavePaths channelId={channelId} />
       <div className="lounge-split-grid">
-        {/* Left Column: Open Spatial Frequency Telemetry & Design Switcher Cards */}
+        {/* Left Column: Open Spatial Frequency Telemetry & Morphic Channel Switcher */}
         <FloatPanel className="lounge-telemetry-col" depth={1.4}>
           <div className="lounge-telemetry-header">
             <span className="section-eyebrow">Выберите настроение</span>
@@ -55,7 +67,8 @@ export const ChannelLoungeSection: React.FC<ChannelLoungeSectionProps> = ({
                   role="radio"
                   tabIndex={0}
                   aria-checked={isCurrent}
-                  className={`channel-lens-row ${isCurrent ? 'is-active' : ''}`}
+                  className={`channel-lens-row living-hover-btn ${isCurrent ? 'is-active' : ''}`}
+                  onPointerMove={handleRowPointerMove}
                   onClick={() => onSelectChannel(ch.id)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
@@ -64,6 +77,18 @@ export const ChannelLoungeSection: React.FC<ChannelLoungeSectionProps> = ({
                     }
                   }}
                 >
+                  {isCurrent && (
+                    <motion.span
+                      layoutId="lounge-channel-indicator"
+                      className="channel-lens-row__glow"
+                      transition={
+                        reducedMotion
+                          ? { duration: 0 }
+                          : { type: 'spring', stiffness: 420, damping: 34 }
+                      }
+                      aria-hidden="true"
+                    />
+                  )}
                   <div className="channel-lens-row__left">
                     <span className="channel-lens-row__freq">
                       {String(idx + 1).padStart(2, '0')}
@@ -76,20 +101,18 @@ export const ChannelLoungeSection: React.FC<ChannelLoungeSectionProps> = ({
                     </span>
                   </div>
                   <span className="channel-lens-row__action">
-                    {isCurrent ? 'Выбран' : 'Слушать ↗'}
+                    <SlideLabel text={isCurrent ? 'Выбран' : 'Слушать ↗'} />
                   </span>
                 </div>
               );
             })}
           </div>
 
-          <div className="security-glass-note">
-            <BlindMaskIcon size={20} />
-            <div>
-              <strong>Слушайте без треклиста</strong>
-              <p>Названия треков скрыты. Если понравился момент, оставьте отметку на волне.</p>
-            </div>
-          </div>
+          <InteractiveNote
+            title="Слушайте без треклиста"
+            body="Названия треков скрыты. Если понравился момент, оставьте отметку на волне."
+            secretHint="Чистый поток · без имён и метаданных"
+          />
         </FloatPanel>
 
         {/* Right Column: Airy Glass Live Ether Chat */}

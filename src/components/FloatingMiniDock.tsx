@@ -3,6 +3,7 @@ import { CHANNEL_COPY } from '../constants/radio';
 import { ReactionKind } from '../types/radio';
 import { formatTimecode } from '../utils/pow';
 import { PauseSignalIcon, PlaySignalIcon } from './icons/RadioIcons';
+import { RollingNumber } from './living/RollingNumber';
 
 interface FloatingMiniDockProps {
   visible: boolean;
@@ -60,7 +61,8 @@ export const FloatingMiniDock: React.FC<FloatingMiniDockProps> = ({
           <div className="mini-dock-meta">
             <strong>ToniVecherRadio</strong>
             <span>
-              {CHANNEL_COPY[channelId]?.name || 'Эфир'} · {formatTimecode(positionSec)}
+              {CHANNEL_COPY[channelId]?.name || 'Эфир'} ·{' '}
+              <RollingNumber value={formatTimecode(positionSec)} />
             </span>
           </div>
         </div>

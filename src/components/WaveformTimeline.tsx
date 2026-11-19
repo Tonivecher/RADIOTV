@@ -1,10 +1,11 @@
 import { FloatPanel } from './SpatialMotion';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { radioDsp } from '../audio/dspEngine';
 import { MeterBallistics, levelToUnit } from '../audio/meterBallistics';
+import { getReactiveAudioEnergy } from '../audio/reactiveTelemetry';
 import { REACTION_CATALOG, ReactionKind, WaveformMoment } from '../types/radio';
 import { useHiDpiCanvas } from '../utils/hiDpiCanvas';
 import { formatTimecode } from '../utils/pow';
+import { RollingNumber } from './living/RollingNumber';
 
 interface WaveformTimelineProps {
   peaks: number[];
@@ -65,10 +66,10 @@ const readWaveColors = (): WaveColors => {
   const v = (name: string, fallback: string) => s.getPropertyValue(name).trim() || fallback;
   return {
     unplayed: v('--wave-unplayed', 'rgba(223,211,192,0.52)'),
-    played: v('--wave-played', '#7c9ff0'),
-    hot: v('--wave-hot', '#58ad99'),
-    mirror: v('--wave-mirror', 'rgba(137,126,194,0.36)'),
-    accent: v('--accent-primary', '#7c9ff0'),
+    played: v('--wave-played', '#e7bb94'),
+    hot: v('--wave-hot', '#b8c6ad'),
+    mirror: v('--wave-mirror', 'rgba(231,187,148,0.22)'),
+    accent: v('--accent-primary', '#e7bb94'),
     text: v('--text-primary', '#dfd3c0'),
   };
 };
@@ -424,11 +425,11 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
         return;
       }
 
-      // Real playback dynamics -> analog ballistics (10 ms attack, 0.85/frame decay).
+      // Real playback dynamics -> analog ballistics (works in both DSP and iOS-safe direct mode).
       let input = 0;
       if (live.isPlaying) {
-        const lv = radioDsp.getStereoLevels();
-        if (lv) input = levelToUnit(Math.min(1, Math.max(lv.rmsL, lv.rmsR) * 2.6));
+        const energy = getReactiveAudioEnergy(now * 0.001);
+        input = levelToUnit(energy.level);
       }
       meter.update(input, now, dt);
 
@@ -593,7 +594,9 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
               </button>
             )}
             <div className="waveform-time-readout">
-              <strong className="waveform-time-readout__now">{formatTimecode(displayPosition)}</strong>
+              <strong className="waveform-time-readout__now">
+                <RollingNumber value={formatTimecode(displayPosition)} />
+              </strong>
               <span className="waveform-time-readout__slash">/</span>
               <span className="waveform-time-readout__total">{formatTimecode(durationSec)}</span>
             </div>

@@ -7,6 +7,7 @@ import {
   UserSession,
 } from '../types/radio';
 import { formatTimecode } from '../utils/pow';
+import { RollingNumber } from './living/RollingNumber';
 
 interface LiveEtherChatProps {
   messages: ChatMessageItem[];
@@ -191,7 +192,9 @@ export const LiveEtherChat: React.FC<LiveEtherChatProps> = ({
         <form className="chat-composer" onSubmit={handleSubmit}>
           <div className="chat-composer__status">
             <span>Сет: {activeSetCode.replace('TRANSMISSION // ', '')}</span>
-            <span>Сейчас: {formatTimecode(currentPositionSec)}</span>
+            <span>
+              Сейчас: <RollingNumber value={formatTimecode(currentPositionSec)} />
+            </span>
           </div>
           <div className="chat-composer__row">
             <input
