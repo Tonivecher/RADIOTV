@@ -57,3 +57,9 @@ export const CHANNEL_COPY: Record<string, { name: string; description: string }>
     description: 'Медленнее, теплее. Глубокий ночной ритм.',
   },
 };
+
+export const CHANNEL_GENRE_TAGS: Record<string, readonly string[]> = {
+  'ch-main': ['deep-tech · tech · deep', 'minimal tech', 'ночной грув'],
+  'ch-deep': ['deep house', 'тёплый саб-бас', 'dub & deep'],
+  'ch-afterglow': ['deep tech', 'после полуночи', 'гипнотический ритм'],
+};

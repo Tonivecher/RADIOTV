@@ -1,18 +1,19 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useReducedMotion } from 'framer-motion';
-import MetroHero, { MetroHeroFrameContext } from '@/components/ui/scroll-locked-video-hero';
 import {
   interpolateAsciiProfile,
   resolveChannelAsciiProfile,
   resolveChannelPortalCopy,
 } from '../constants/ascii';
 import { AsciiDotsRenderer } from '../utils/asciiDotsRenderer';
+import { GlitchText } from './living/GlitchText';
 import '../styles/deep-portal.css';
 
 export interface ChannelTransition {
   fromChannelId: string;
   toChannelId: string;
+  nonce?: number;
 }
 
 interface ChannelTransitionPortalProps {
@@ -22,13 +23,13 @@ interface ChannelTransitionPortalProps {
   onComplete: () => void;
 }
 
-const EXIT_DURATION_MS = 280;
+const TRANSFER_DURATION_MS = 1550;
+const REDUCED_DURATION_MS = 160;
 
 /**
- * Scroll-locked genre transition overlay powered by MetroHero (`@/components/ui/scroll-locked-video-hero`).
- * Scrubbing through the portal continuously morphs the source channel visual profile
- * (e.g. subtle ASCII-glitch video on Main -> full ASCII dots on Deep -> violet-amber grid on DeepTech)
- * into the target genre without interrupting live audio playback.
+ * Instant automatic cinematic glitch-transfer overlay (no scroll-lock, no body pinning, no SCROLL prompt).
+ * Runs for ~640ms on channel switch using AsciiDotsRenderer signal-tear RGB slices + GlitchText title
+ * assembly, then smoothly dissolves into the target channel world without interrupting live audio.
  */
 export function ChannelTransitionPortal({
   transition,
@@ -36,77 +37,19 @@ export function ChannelTransitionPortal({
   posterUrl,
   onComplete,
 }: ChannelTransitionPortalProps) {
-  const reducedMotion = Boolean(useReducedMotion());
-  const [exitingForKey, setExitingForKey] = useState<string | null>(null);
-
+  const hookReducedMotion = Boolean(useReducedMotion());
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const rendererRef = useRef<AsciiDotsRenderer | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const posterImgRef = useRef<HTMLImageElement | null>(null);
+  const rendererRef = useRef<AsciiDotsRenderer | null>(null);
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
 
-  const exitingKeyRef = useRef<string | null>(null);
-  const exitTimerRef = useRef<number | undefined>(undefined);
-  const absorbTimerRef = useRef<number | undefined>(undefined);
-  const absorbCleanupRef = useRef<(() => void) | null>(null);
+  const [exiting, setExiting] = useState(false);
 
   const transitionKey = transition
-    ? `${transition.fromChannelId}->${transition.toChannelId}`
+    ? `${transition.fromChannelId}->${transition.toChannelId}:${transition.nonce ?? 0}`
     : '';
-  const exiting = Boolean(transitionKey) && exitingForKey === transitionKey;
-
-  const finishPortal = useCallback(() => {
-    if (!transitionKey || exitingKeyRef.current === transitionKey) return;
-    exitingKeyRef.current = transitionKey;
-    setExitingForKey(transitionKey);
-
-    // Absorb residual trackpad inertia right after unlock so the page doesn't jump past the hero.
-    absorbCleanupRef.current?.();
-    const absorbWheel = (event: WheelEvent) => {
-      event.preventDefault();
-    };
-    window.addEventListener('wheel', absorbWheel, { passive: false, capture: true });
-    const cleanup = () => {
-      window.removeEventListener('wheel', absorbWheel, { capture: true });
-      absorbCleanupRef.current = null;
-    };
-    absorbCleanupRef.current = cleanup;
-    window.clearTimeout(absorbTimerRef.current);
-    absorbTimerRef.current = window.setTimeout(cleanup, EXIT_DURATION_MS + 240);
-
-    window.clearTimeout(exitTimerRef.current);
-    exitTimerRef.current = window.setTimeout(() => {
-      onCompleteRef.current();
-    }, EXIT_DURATION_MS);
-  }, [transitionKey]);
-
-  useEffect(() => {
-    exitingKeyRef.current = null;
-    setExitingForKey(null);
-    window.clearTimeout(exitTimerRef.current);
-    window.clearTimeout(absorbTimerRef.current);
-    absorbCleanupRef.current?.();
-  }, [transitionKey]);
-
-  useEffect(() => {
-    const img = new Image();
-    img.decoding = 'async';
-    img.src = posterUrl;
-    posterImgRef.current = img;
-    return () => {
-      img.onload = null;
-    };
-  }, [posterUrl]);
-
-  useEffect(() => {
-    return () => {
-      window.clearTimeout(exitTimerRef.current);
-      window.clearTimeout(absorbTimerRef.current);
-      absorbCleanupRef.current?.();
-      rendererRef.current?.dispose();
-      rendererRef.current = null;
-    };
-  }, []);
 
   const fromProfile = useMemo(
     () => resolveChannelAsciiProfile(transition?.fromChannelId || 'ch-main'),
@@ -121,83 +64,184 @@ export function ChannelTransitionPortal({
     [transition?.toChannelId]
   );
 
-  const scrubDistance = useMemo(() => {
-    if (typeof window === 'undefined') return 950;
-    return window.matchMedia('(pointer: coarse)').matches ? 520 : 950;
+  // Keep decoded poster ready for immediate first frame
+  useEffect(() => {
+    const img = new Image();
+    img.decoding = 'async';
+    img.src = posterUrl;
+    posterImgRef.current = img;
+    return () => {
+      img.onload = null;
+    };
+  }, [posterUrl]);
+
+  useEffect(() => {
+    return () => {
+      rendererRef.current?.dispose();
+      rendererRef.current = null;
+    };
   }, []);
 
-  const handleRenderFrame = useCallback(
-    ({ video, section, progress, timeSec, reducedMotion: rm }: MetroHeroFrameContext) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      if (!rendererRef.current) {
-        rendererRef.current = new AsciiDotsRenderer();
-      }
-      const width = Math.max(1, section.clientWidth || window.innerWidth);
-      const height = Math.max(1, section.clientHeight || window.innerHeight);
-      const hasVideo =
-        video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0;
-      const source = hasVideo ? video : posterImgRef.current;
-      const morphedProfile = interpolateAsciiProfile(fromProfile, toProfile, progress, 0.44);
+  useEffect(() => {
+    if (!transition || !transitionKey) return;
 
-      rendererRef.current.renderFrame(canvas, source, {
-        width,
-        height,
-        dpr: window.devicePixelRatio || 1,
-        overscanTopPx: 0,
-        timeSec: timeSec + progress * 1.4,
-        profile: morphedProfile,
-        animate: !rm,
-        scale: 1 + progress * 0.14,
-        continuousGlitch: !rm && progress > 0.02 && progress < 0.98,
-      });
-    },
-    [fromProfile, toProfile]
-  );
+    const reducedMotion =
+      hookReducedMotion ||
+      (typeof window !== 'undefined' &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+    setExiting(false);
+
+    if (reducedMotion || document.hidden) {
+      const fadeTimer = window.setTimeout(() => setExiting(true), 40);
+      const doneTimer = window.setTimeout(() => {
+        onCompleteRef.current();
+      }, REDUCED_DURATION_MS);
+      return () => {
+        window.clearTimeout(fadeTimer);
+        window.clearTimeout(doneTimer);
+      };
+    }
+
+    if (!rendererRef.current) {
+      rendererRef.current = new AsciiDotsRenderer();
+    }
+    const renderer = rendererRef.current;
+
+    // Try grabbing the live background <video> element already playing in DOM for instant zero-lag glitch slicing
+    const bgVideo = document.querySelector<HTMLVideoElement>('.evening-background__source');
+    const localVideo = videoRef.current;
+    if (localVideo && !bgVideo) {
+      void localVideo.play().catch(() => {});
+    }
+
+    const startMs = performance.now();
+    let rafId = 0;
+    let finished = false;
+    let fadeTriggered = false;
+
+    const completeNow = () => {
+      if (finished) return;
+      finished = true;
+      window.cancelAnimationFrame(rafId);
+      onCompleteRef.current();
+    };
+
+    const safetyTimer = window.setTimeout(completeNow, TRANSFER_DURATION_MS + 200);
+
+    const tick = (nowMs: number) => {
+      if (finished) return;
+      if (document.hidden) {
+        completeNow();
+        return;
+      }
+
+      const elapsed = nowMs - startMs;
+      const progress = Math.max(0, Math.min(1, elapsed / TRANSFER_DURATION_MS));
+
+      if (!fadeTriggered && progress >= 0.74) {
+        fadeTriggered = true;
+        setExiting(true);
+      }
+
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const width = Math.max(1, window.innerWidth);
+        const height = Math.max(1, window.innerHeight);
+        const liveVid =
+          bgVideo && bgVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && bgVideo.videoWidth > 0
+            ? bgVideo
+            : localVideo &&
+                localVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+                localVideo.videoWidth > 0
+              ? localVideo
+              : null;
+
+        const source = liveVid || posterImgRef.current;
+        const surge = Math.pow(Math.sin(progress * Math.PI), 0.78);
+        const morphedProfile = interpolateAsciiProfile(fromProfile, toProfile, progress, 0.82);
+
+        renderer.renderFrame(canvas, source, {
+          width,
+          height,
+          dpr: Math.min(window.devicePixelRatio || 1, 1.5),
+          overscanTopPx: 0,
+          timeSec: nowMs * 0.001 + progress * 3.2,
+          profile: morphedProfile,
+          animate: true,
+          scale: 1 + surge * 0.075,
+          continuousGlitch: true,
+          transferSurge: surge,
+        });
+      }
+
+      if (progress >= 1) {
+        completeNow();
+        return;
+      }
+      rafId = window.requestAnimationFrame(tick);
+    };
+
+    rafId = window.requestAnimationFrame(tick);
+
+    return () => {
+      finished = true;
+      window.clearTimeout(safetyTimer);
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [transition, transitionKey, fromProfile, toProfile, hookReducedMotion]);
 
   if (!transition) return null;
 
   const portalStyle = {
     '--portal-bg': copy.bgHex,
     '--portal-accent': copy.accentHex,
+    '--portal-secondary': copy.secondaryHex,
     '--portal-text': copy.textHex,
-    '--portal-glow': `${copy.accentHex}44`,
+    '--portal-glow': `${copy.accentHex}55`,
   } as React.CSSProperties;
 
   return createPortal(
-    <MetroHero
+    <div
       key={transitionKey}
-      className="channel-transition-portal"
+      className={`channel-transition-portal${exiting ? ' is-exiting' : ''}`}
       style={portalStyle}
-      exiting={exiting}
-      dialogRole
-      videoSrc={videoSrc}
-      posterSrc={posterUrl}
-      eyebrow={copy.eyebrow}
-      title={copy.title}
-      scrollHint={reducedMotion ? '' : 'SCROLL'}
-      tagline={copy.tagline}
-      skipLabel={copy.skipLabel}
-      signature={false}
-      scrubDistance={scrubDistance}
-      maxScale={0.14}
-      taglineRange={[0.42, 0.76]}
-      completionThreshold={0.985}
-      accentColor={copy.accentHex}
-      progressGradient={`linear-gradient(90deg, ${copy.accentHex}77, ${copy.accentHex}, ${copy.secondaryHex})`}
-      titleFontFamily="var(--font-display)"
-      bodyFontFamily="var(--font-body)"
-      backdropSlot={
-        <canvas
-          ref={canvasRef}
-          className="channel-transition-portal__canvas"
-          aria-hidden="true"
+      role="status"
+      aria-live="polite"
+      aria-label={`Переход на канал ${copy.title}`}
+    >
+      <video
+        ref={videoRef}
+        src={videoSrc}
+        poster={posterUrl}
+        muted
+        playsInline
+        preload="none"
+        className="channel-transition-portal__video-fallback"
+        aria-hidden="true"
+      />
+      <canvas
+        ref={canvasRef}
+        className="channel-transition-portal__canvas"
+        aria-hidden="true"
+      />
+      <div className="channel-transition-portal__scanlines" aria-hidden="true" />
+      <div className="channel-transition-portal__hud">
+        <span className="channel-transition-portal__eyebrow">{copy.eyebrow}</span>
+        <GlitchText
+          as="div"
+          text={copy.title}
+          trigger="change"
+          intensity="strong"
+          accent={copy.accentHex}
+          secondaryAccent="#4de4f4"
+          burstOnMount
+          className="channel-transition-portal__title"
         />
-      }
-      onRenderFrame={handleRenderFrame}
-      onComplete={finishPortal}
-      onSkip={finishPortal}
-    />,
+        <span className="channel-transition-portal__tagline">{copy.tagline}</span>
+      </div>
+      <div className="channel-transition-portal__bar" aria-hidden="true" />
+    </div>,
     document.body
   );
 }

@@ -107,16 +107,16 @@ const GLOBE_PALETTE_MAIN: GlobePalette = {
 };
 
 const GLOBE_PALETTE_DEEP: GlobePalette = {
-  oceanDeep: [10, 46, 118],
-  oceanLit: [26, 162, 248],
-  shallows: [45, 228, 212],
-  forest: [36, 218, 142],
-  savanna: [112, 228, 184],
-  highland: [98, 212, 244],
-  clouds: [196, 214, 232],
-  cityLight: [147, 216, 244],
-  atmosphere: [56, 189, 248],
-  shadowTint: [5, 7, 13],
+  oceanDeep: [56, 20, 28],
+  oceanLit: [158, 66, 70],
+  shallows: [212, 122, 112],
+  forest: [138, 86, 72],
+  savanna: [198, 134, 96],
+  highland: [224, 152, 118],
+  clouds: [232, 212, 206],
+  cityLight: [236, 186, 132],
+  atmosphere: [223, 128, 120],
+  shadowTint: [22, 10, 13],
 };
 
 const GLOBE_PALETTE_DEEPTECH: GlobePalette = {
@@ -128,7 +128,7 @@ const GLOBE_PALETTE_DEEPTECH: GlobePalette = {
   highland: [240, 168, 112],
   clouds: [207, 196, 230],
   cityLight: [244, 191, 48],
-  atmosphere: [167, 139, 244],
+  atmosphere: [177, 156, 232],
   shadowTint: [20, 16, 29],
 };
 
@@ -177,8 +177,8 @@ function interpolatePalette(a: GlobePalette, b: GlobePalette, t: number): GlobeP
 
 function resolveGlobePalette(profile: AsciiChannelProfile): GlobePalette {
   const [tr, tg, tb] = parseHexRgb(profile.tintHex);
-  const deepProximity = Math.max(0, 1 - Math.hypot(tr - 56, tg - 189, tb - 248) / 220);
-  const techProximity = Math.max(0, 1 - Math.hypot(tr - 167, tg - 139, tb - 250) / 220);
+  const deepProximity = Math.max(0, 1 - Math.hypot(tr - 94, tg - 34, tb - 40) / 140);
+  const techProximity = Math.max(0, 1 - Math.hypot(tr - 79, tg - 61, tb - 130) / 140);
   const total = deepProximity + techProximity;
 
   if (profile.asciiMix < 0.16 && total < 0.35) {
@@ -228,6 +228,9 @@ export interface AsciiGlobeRenderOptions {
   scale: number;
   animate: boolean;
   glitchStrength?: number;
+  audioLevel?: number;
+  pointerX?: number;
+  pointerY?: number;
 }
 
 const AXIAL_TILT_RAD = (23.4 * Math.PI) / 180;
@@ -285,10 +288,279 @@ function cachedRgba(r: number, g: number, b: number, a = 1): string {
   return str;
 }
 
+// ───────────────────────── Ball Lightning Autonomous Physics & Mouse Grab ─────────────────────────
+
+interface PlasmaSpark {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  glyph: string;
+  bornSec: number;
+  lifeSec: number;
+}
+
+type BallLightningMode = 'levitate' | 'wander' | 'dart' | 'flung';
+
+const SPARK_GLYPHS = ['⚡', '*', '+', '#', '∆', '░', ':'];
+
+const ballState = {
+  u: 0.74,
+  v: 0.22,
+  vu: -0.04,
+  vv: 0.015,
+  targetU: 0.26,
+  targetV: 0.28,
+  curlSign: 1,
+  mode: 'wander' as BallLightningMode,
+  nextDecisionSec: 0,
+  lastStepSec: 0,
+  spinAngle: 1.1,
+  spinSpeed: 0.48,
+  charge: 0.25,
+  shockwaveBornSec: -10,
+  shockwaveX: 0,
+  shockwaveY: 0,
+  isDragging: false,
+  isHovered: false,
+  pointerId: -1,
+  downClientX: 0,
+  downClientY: 0,
+  downTimeMs: 0,
+  dragTargetU: 0.74,
+  dragTargetV: 0.22,
+  lastPointerClientX: -9999,
+  lastPointerClientY: -9999,
+  lastMoveMs: 0,
+  screenCx: 0,
+  screenCy: 0,
+  screenRadius: 64,
+  viewportW: 1440,
+  viewportH: 900,
+  overscanPx: 44,
+  sparks: [] as PlasmaSpark[],
+};
+
+function pseudoNoise(seed: number): number {
+  const s = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+function isInteractiveUiElement(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return Boolean(
+    target.closest(
+      'button, a, input, textarea, select, label, [role="slider"], [role="button"], [role="radio"], [role="tab"], .island-header-shell, .floating-mini-dock, .auth-modal, .moscow-intro'
+    )
+  );
+}
+
+function spawnSparks(cx: number, cy: number, count: number, speedScale: number, nowSec: number): void {
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.6;
+    const speed = (35 + Math.random() * 115) * speedScale;
+    if (ballState.sparks.length > 48) {
+      ballState.sparks.shift();
+    }
+    ballState.sparks.push({
+      x: cx + (Math.random() - 0.5) * 14,
+      y: cy + (Math.random() - 0.5) * 14,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      glyph: SPARK_GLYPHS[Math.floor(Math.random() * SPARK_GLYPHS.length)],
+      bornSec: nowSec,
+      lifeSec: 0.35 + Math.random() * 0.45,
+    });
+  }
+}
+
+function pickNewBallTarget(nowSec: number, forceDart = false): void {
+  const r = Math.random();
+  if (forceDart || r < 0.32) {
+    ballState.mode = 'dart';
+    ballState.targetU = 0.12 + Math.random() * 0.76;
+    ballState.targetV = 0.13 + Math.random() * 0.48;
+    ballState.curlSign = Math.random() < 0.5 ? -1 : 1;
+    ballState.nextDecisionSec = nowSec + 0.55 + Math.random() * 0.65;
+    ballState.charge = Math.max(ballState.charge, 0.92);
+  } else if (r < 0.56) {
+    ballState.mode = 'levitate';
+    ballState.targetU = Math.max(0.12, Math.min(0.88, ballState.u + (Math.random() - 0.5) * 0.08));
+    ballState.targetV = Math.max(0.12, Math.min(0.62, ballState.v + (Math.random() - 0.5) * 0.07));
+    ballState.nextDecisionSec = nowSec + 1.1 + Math.random() * 1.6;
+  } else {
+    ballState.mode = 'wander';
+    ballState.targetU = 0.12 + Math.random() * 0.76;
+    ballState.targetV = 0.12 + Math.random() * 0.5;
+    ballState.curlSign = Math.random() < 0.5 ? -1 : 1;
+    ballState.nextDecisionSec = nowSec + 2.0 + Math.random() * 2.4;
+  }
+}
+
 /**
- * Draws the colossal spinning voxel-ASCII Earth anchored cleanly in the upper-center visible sky
- * (accounting for any container overscan like `.evening-background__pointer { inset: -44px }`),
- * flush-tiled with Minecraft-rich biome colors and bright ASCII glyphs.
+ * Binds global pointer listeners so the user can grab, drag, fling, or click-shockwave
+ * the Ball Lightning ASCII Globe anywhere it floats (without blocking UI buttons/sliders).
+ */
+export function bindBallLightningInteraction(): () => void {
+  const syncDocAttributes = () => {
+    const root = document.documentElement;
+    if (ballState.isDragging) {
+      root.setAttribute('data-globe-drag', 'true');
+      root.removeAttribute('data-globe-hover');
+    } else if (ballState.isHovered) {
+      root.setAttribute('data-globe-hover', 'true');
+      root.removeAttribute('data-globe-drag');
+    } else {
+      root.removeAttribute('data-globe-hover');
+      root.removeAttribute('data-globe-drag');
+    }
+  };
+
+  const onPointerDown = (e: PointerEvent) => {
+    if (e.button !== 0 && e.pointerType === 'mouse') return;
+    if (isInteractiveUiElement(e.target)) return;
+
+    const dist = Math.hypot(e.clientX - ballState.screenCx, e.clientY - ballState.screenCy);
+    if (dist > ballState.screenRadius * 1.42) return;
+
+    ballState.isDragging = true;
+    ballState.pointerId = e.pointerId;
+    ballState.downClientX = e.clientX;
+    ballState.downClientY = e.clientY;
+    ballState.downTimeMs = performance.now();
+    ballState.lastMoveMs = ballState.downTimeMs;
+    ballState.lastPointerClientX = e.clientX;
+    ballState.lastPointerClientY = e.clientY;
+    ballState.dragTargetU = Math.max(0.08, Math.min(0.92, e.clientX / Math.max(1, ballState.viewportW)));
+    ballState.dragTargetV = Math.max(0.08, Math.min(0.84, e.clientY / Math.max(1, ballState.viewportH)));
+    ballState.charge = 1.3;
+    spawnSparks(ballState.screenCx, ballState.screenCy, 8, 0.9, performance.now() * 0.001);
+    syncDocAttributes();
+  };
+
+  const onPointerMove = (e: PointerEvent) => {
+    const nowMs = performance.now();
+    const dtSec = Math.max(0.005, (nowMs - ballState.lastMoveMs) * 0.001);
+    const prevX = ballState.lastPointerClientX;
+    const prevY = ballState.lastPointerClientY;
+    ballState.lastPointerClientX = e.clientX;
+    ballState.lastPointerClientY = e.clientY;
+    ballState.lastMoveMs = nowMs;
+
+    if (ballState.isDragging) {
+      const vw = Math.max(1, ballState.viewportW);
+      const vh = Math.max(1, ballState.viewportH);
+      const nextU = Math.max(0.07, Math.min(0.93, e.clientX / vw));
+      const nextV = Math.max(0.08, Math.min(0.86, e.clientY / vh));
+      const instVu = (nextU - ballState.dragTargetU) / dtSec;
+      const instVv = (nextV - ballState.dragTargetV) / dtSec;
+      ballState.vu = ballState.vu * 0.45 + Math.max(-1.6, Math.min(1.6, instVu)) * 0.55;
+      ballState.vv = ballState.vv * 0.45 + Math.max(-1.6, Math.min(1.6, instVv)) * 0.55;
+      ballState.dragTargetU = nextU;
+      ballState.dragTargetV = nextV;
+      ballState.charge = 1.35;
+      if (Math.hypot(e.clientX - prevX, e.clientY - prevY) > 10) {
+        spawnSparks(ballState.screenCx, ballState.screenCy, 2, 0.75, nowMs * 0.001);
+      }
+      return;
+    }
+
+    const overUi = isInteractiveUiElement(e.target);
+    const dist = Math.hypot(e.clientX - ballState.screenCx, e.clientY - ballState.screenCy);
+    const nextHover = !overUi && dist <= ballState.screenRadius * 1.32;
+    if (nextHover !== ballState.isHovered) {
+      ballState.isHovered = nextHover;
+      syncDocAttributes();
+    }
+  };
+
+  const onPointerUp = (e: PointerEvent) => {
+    if (!ballState.isDragging) return;
+    ballState.isDragging = false;
+    ballState.pointerId = -1;
+
+    const nowMs = performance.now();
+    const nowSec = nowMs * 0.001;
+    const movedPx = Math.hypot(e.clientX - ballState.downClientX, e.clientY - ballState.downClientY);
+    const heldMs = nowMs - ballState.downTimeMs;
+
+    if (movedPx < 14 && heldMs < 320) {
+      // Quick click / poke -> Plasma Shockwave Discharge + sudden ball-lightning dart!
+      ballState.shockwaveBornSec = nowSec;
+      ballState.shockwaveX = ballState.screenCx;
+      ballState.shockwaveY = ballState.screenCy;
+      ballState.spinSpeed = 3.6;
+      ballState.charge = 1.65;
+      spawnSparks(ballState.screenCx, ballState.screenCy, 18, 1.5, nowSec);
+      pickNewBallTarget(nowSec, true);
+    } else {
+      // Flung with hand momentum!
+      ballState.mode = 'flung';
+      ballState.nextDecisionSec = nowSec + 1.45;
+      ballState.spinSpeed = Math.min(3.4, 0.8 + Math.hypot(ballState.vu, ballState.vv) * 2.2);
+      ballState.charge = 1.25;
+      spawnSparks(ballState.screenCx, ballState.screenCy, 10, 1.15, nowSec);
+    }
+    syncDocAttributes();
+  };
+
+  window.addEventListener('pointerdown', onPointerDown, { passive: true });
+  window.addEventListener('pointermove', onPointerMove, { passive: true });
+  window.addEventListener('pointerup', onPointerUp, { passive: true });
+  window.addEventListener('pointercancel', onPointerUp, { passive: true });
+
+  return () => {
+    window.removeEventListener('pointerdown', onPointerDown);
+    window.removeEventListener('pointermove', onPointerMove);
+    window.removeEventListener('pointerup', onPointerUp);
+    window.removeEventListener('pointercancel', onPointerUp);
+    ballState.isDragging = false;
+    ballState.isHovered = false;
+    syncDocAttributes();
+  };
+}
+
+function drawJaggedLightningArc(
+  ctx: CanvasRenderingContext2D,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  segments: number,
+  jitterPx: number,
+  seed: number,
+  colorStr: string,
+  alpha: number,
+  lineWidth = 1.4
+): void {
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+  ctx.strokeStyle = colorStr;
+  ctx.lineWidth = lineWidth;
+  ctx.globalAlpha = clamp01(alpha);
+  ctx.beginPath();
+  ctx.moveTo(x0, y0);
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len;
+  const ny = dx / len;
+
+  for (let i = 1; i < segments; i++) {
+    const t = i / segments;
+    const envelope = Math.sin(t * Math.PI);
+    const offset = (pseudoNoise(seed + i * 13.37) - 0.5) * 2 * jitterPx * envelope;
+    ctx.lineTo(x0 + dx * t + nx * offset, y0 + dy * t + ny * offset);
+  }
+  ctx.lineTo(x1, y1);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * Draws the autonomous & interactive Ball-Lightning ASCII Globe that roams erratically
+ * like ball lightning (`levitate` / `wander` / `dart` / `flung`) and can be grabbed,
+ * dragged, flung, or click-discharged with the mouse or touch.
  */
 export function renderAsciiGlobeLayer(
   ctx: CanvasRenderingContext2D,
@@ -306,6 +578,7 @@ export function renderAsciiGlobeLayer(
     scale,
     animate,
     glitchStrength = 0,
+    audioLevel = 0,
   } = opts;
 
   const viewportW = Math.max(1, width - overscanTopPx * 2);
@@ -313,24 +586,161 @@ export function renderAsciiGlobeLayer(
   const isMobile = viewportW <= 760;
   const isTablet = viewportW > 760 && viewportW <= 1100;
 
-  // Anchor the globe below the floating island header on every breakpoint (390/760/1100/1440)
-  // so header pills never cut across the planet and the full sphere stays unclipped.
+  // Step Ball Lightning erratic kinematics
+  const dt =
+    ballState.lastStepSec > 0
+      ? Math.max(0.004, Math.min(0.08, timeSec - ballState.lastStepSec))
+      : 0.016;
+  ballState.lastStepSec = timeSec;
+
+  if (animate) {
+    if (ballState.isDragging) {
+      const du = ballState.dragTargetU - ballState.u;
+      const dv = ballState.dragTargetV - ballState.v;
+      ballState.u += du * Math.min(1, dt * 24);
+      ballState.v += dv * Math.min(1, dt * 24);
+      ballState.spinSpeed = Math.min(3.5, 0.9 + Math.hypot(ballState.vu, ballState.vv) * 2.1);
+    } else if (ballState.mode === 'flung') {
+      ballState.u += ballState.vu * dt;
+      ballState.v += ballState.vv * dt;
+      ballState.vu *= Math.pow(0.24, dt);
+      ballState.vv *= Math.pow(0.24, dt);
+
+      if (ballState.u < 0.08 || ballState.u > 0.92) {
+        ballState.vu = -ballState.vu * 0.78;
+        ballState.u = Math.max(0.08, Math.min(0.92, ballState.u));
+        spawnSparks(
+          overscanTopPx + ballState.u * viewportW,
+          overscanTopPx + ballState.v * viewportH,
+          7,
+          1.1,
+          timeSec
+        );
+      }
+      if (ballState.v < 0.1 || ballState.v > 0.72) {
+        ballState.vv = -ballState.vv * 0.78;
+        ballState.v = Math.max(0.1, Math.min(0.72, ballState.v));
+        spawnSparks(
+          overscanTopPx + ballState.u * viewportW,
+          overscanTopPx + ballState.v * viewportH,
+          7,
+          1.1,
+          timeSec
+        );
+      }
+      if (timeSec >= ballState.nextDecisionSec || Math.hypot(ballState.vu, ballState.vv) < 0.05) {
+        pickNewBallTarget(timeSec, false);
+      }
+    } else {
+      if (timeSec >= ballState.nextDecisionSec) {
+        pickNewBallTarget(timeSec, audioLevel > 0.72 && Math.random() < 0.45);
+      }
+      const du = ballState.targetU - ballState.u;
+      const dv = ballState.targetV - ballState.v;
+      const dist = Math.hypot(du, dv);
+      if (dist < 0.035 && ballState.mode !== 'levitate') {
+        pickNewBallTarget(timeSec, false);
+      } else {
+        const pull =
+          ballState.mode === 'dart'
+            ? 2.45
+            : ballState.mode === 'levitate'
+              ? 0.45
+              : 0.95;
+        const maxSpd =
+          ballState.mode === 'dart'
+            ? 0.48
+            : ballState.mode === 'levitate'
+              ? 0.06
+              : 0.17;
+        const dirU = dist > 0.001 ? du / dist : 0;
+        const dirV = dist > 0.001 ? dv / dist : 0;
+        // Perpendicular curl force so ball lightning curves & weaves unpredictably instead of moving on a line/arc
+        const curlWave =
+          Math.sin(timeSec * 2.7 + ballState.u * 9) * 0.65 +
+          Math.cos(timeSec * 4.3 - ballState.v * 11) * 0.35;
+        const curlStrength = ballState.mode === 'wander' ? 0.22 : ballState.mode === 'dart' ? 0.35 : 0.08;
+        const accelU = dirU * pull + -dirV * curlStrength * ballState.curlSign * curlWave;
+        const accelV = dirV * pull + dirU * curlStrength * ballState.curlSign * curlWave;
+
+        ballState.vu = (ballState.vu + accelU * dt) * Math.pow(0.18, dt);
+        ballState.vv = (ballState.vv + accelV * dt) * Math.pow(0.18, dt);
+        const spd = Math.hypot(ballState.vu, ballState.vv);
+        if (spd > maxSpd) {
+          ballState.vu = (ballState.vu / spd) * maxSpd;
+          ballState.vv = (ballState.vv / spd) * maxSpd;
+        }
+        ballState.u = Math.max(0.09, Math.min(0.91, ballState.u + ballState.vu * dt));
+        ballState.v = Math.max(0.1, Math.min(0.66, ballState.v + ballState.vv * dt));
+      }
+      ballState.spinSpeed += (0.46 + audioLevel * 0.55 - ballState.spinSpeed) * Math.min(1, dt * 3);
+    }
+
+    ballState.spinAngle += ballState.spinSpeed * dt;
+    ballState.charge = Math.max(
+      0.22 + audioLevel * 0.55,
+      ballState.charge - dt * (ballState.isDragging ? 0 : 0.55)
+    );
+
+    // Spontaneous plasma spark shedding when darting or excited
+    if (
+      (ballState.mode === 'dart' || ballState.charge > 0.75) &&
+      Math.random() < 0.38
+    ) {
+      spawnSparks(
+        overscanTopPx + ballState.u * viewportW,
+        overscanTopPx + ballState.v * viewportH,
+        1,
+        0.55,
+        timeSec
+      );
+    }
+  } else {
+    ballState.u = 0.78;
+    ballState.v = 0.22;
+  }
+
+  // High-frequency ball-lightning plasma tremor
+  const tremorX = animate
+    ? (Math.sin(timeSec * 17.3) * 2.2 + Math.cos(timeSec * 29.1) * 1.4) * (0.6 + ballState.charge * 0.7)
+    : 0;
+  const tremorY = animate
+    ? (Math.cos(timeSec * 19.7) * 2.0 + Math.sin(timeSec * 23.4) * 1.3) * (0.6 + ballState.charge * 0.7)
+    : 0;
+
+  const breatheScale = animate
+    ? 0.92 + 0.14 * Math.sin(timeSec * 2.1) + audioLevel * 0.1 + (ballState.isDragging ? 0.12 : 0)
+    : 1;
+  const depthPresence = 0.94;
+
   const baseRadius = isMobile
-    ? Math.max(46, Math.min(54, Math.round(viewportW * 0.132)))
+    ? Math.max(36, Math.min(44, Math.round(viewportW * 0.1)))
     : isTablet
-      ? Math.max(58, Math.min(68, Math.round(viewportW * 0.072)))
-      : Math.max(64, Math.min(76, Math.round(Math.min(viewportW * 0.055, viewportH * 0.082))));
-  const radius = Math.round(baseRadius * (1 + Math.max(0, scale - 1) * 0.34));
-  const headerClearance = isMobile ? 118 : isTablet ? 138 : 88;
-  const cx = Math.round(width * 0.5);
-  const cy = Math.round(overscanTopPx + headerClearance + radius);
+      ? Math.max(50, Math.min(60, Math.round(viewportW * 0.054)))
+      : Math.max(58, Math.min(72, Math.round(Math.min(viewportW * 0.05, viewportH * 0.08))));
+  const radius = Math.max(
+    24,
+    Math.round(baseRadius * breatheScale * (1 + Math.max(0, scale - 1) * 0.34))
+  );
+
+  const cx = Math.round(overscanTopPx + ballState.u * viewportW + tremorX);
+  const cy = Math.round(overscanTopPx + ballState.v * viewportH + tremorY);
+
+  // Record screen-space coordinates for accurate mouse/touch grab hit-testing
+  ballState.screenCx = cx - overscanTopPx;
+  ballState.screenCy = cy - overscanTopPx;
+  ballState.screenRadius = radius;
+  ballState.viewportW = viewportW;
+  ballState.viewportH = viewportH;
+  ballState.overscanPx = overscanTopPx;
+
   const cellStep = isMobile ? 5 : 7;
   const halfCell = cellStep * 0.5;
   const tileOverlap = cellStep + 0.6;
 
   const palette = resolveGlobePalette(profile);
-  const spin = animate ? timeSec * 0.19 : 1.1;
-  const cloudSpin = animate ? timeSec * 0.24 : 1.4;
+  const spin = animate ? ballState.spinAngle : 1.1;
+  const cloudSpin = animate ? ballState.spinAngle * 1.24 : 1.4;
   const cosSpin = Math.cos(spin);
   const sinSpin = Math.sin(spin);
   const skyHarmRgb = parseHexRgb(profile.tintHex);
@@ -340,7 +750,7 @@ export function renderAsciiGlobeLayer(
     const sy = Math.max(0, Math.min(sampleRows - 1, Math.floor((py / height) * sampleRows)));
     const idx = (sy * sampleCols + sx) * 4;
     const lum = (54 * pixels[idx] + 183 * pixels[idx + 1] + 19 * pixels[idx + 2]) / 65280;
-    return smoothstep(0.18, 0.38, lum);
+    return (0.56 + 0.44 * smoothstep(0.08, 0.3, lum)) * depthPresence;
   };
 
   ctx.save();
@@ -375,20 +785,21 @@ export function renderAsciiGlobeLayer(
   }
   ctx.globalAlpha = 1;
 
-  // 2. Soft celestial atmospheric corona gently breathing in channel tempo behind Earth's limb
+  // 2. Pulsing Ball-Lightning Plasma Corona behind the sphere
   const [ar, ag, ab] = palette.atmosphere;
   const beatSwell = animate
     ? Math.pow(0.5 + 0.5 * Math.sin(timeSec * (profile.grooveBpm / 120) * Math.PI * 2), 1.6)
     : 0.5;
-  const haloRadius = radius * (1.26 + (animate ? beatSwell * 0.05 : 0));
-  const halo = ctx.createRadialGradient(cx, cy, radius * 0.72, cx, cy, haloRadius);
+  const chargeBoost = Math.min(0.65, ballState.charge * 0.35);
+  const haloRadius = radius * (1.42 + (animate ? beatSwell * 0.14 + chargeBoost * 0.35 : 0));
+  const halo = ctx.createRadialGradient(cx, cy, radius * 0.55, cx, cy, haloRadius);
   halo.addColorStop(
     0,
-    `rgba(${Math.round(ar)},${Math.round(ag)},${Math.round(ab)},${(0.28 + beatSwell * 0.08).toFixed(3)})`
+    `rgba(${Math.round(ar)},${Math.round(ag)},${Math.round(ab)},${(0.36 + beatSwell * 0.1 + chargeBoost * 0.24).toFixed(3)})`
   );
   halo.addColorStop(
-    0.65,
-    `rgba(${Math.round(ar)},${Math.round(ag)},${Math.round(ab)},${(0.09 + beatSwell * 0.04).toFixed(3)})`
+    0.58,
+    `rgba(${Math.round(ar)},${Math.round(ag)},${Math.round(ab)},${(0.14 + beatSwell * 0.05 + chargeBoost * 0.12).toFixed(3)})`
   );
   halo.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.globalCompositeOperation = 'screen';
@@ -396,6 +807,49 @@ export function renderAsciiGlobeLayer(
   ctx.beginPath();
   ctx.arc(cx, cy, haloRadius, 0, Math.PI * 2);
   ctx.fill();
+
+  // 2b. Trailing ionized ASCII plasma sparks & click shockwave ring
+  if (animate && ballState.sparks.length > 0) {
+    ctx.font = '700 11px ui-monospace, SFMono-Regular, Menlo, monospace';
+    const sparkColor = cachedRgba(palette.cityLight[0], palette.cityLight[1], palette.cityLight[2]);
+    for (let i = ballState.sparks.length - 1; i >= 0; i--) {
+      const sp = ballState.sparks[i];
+      const age = timeSec - sp.bornSec;
+      if (age >= sp.lifeSec) {
+        ballState.sparks.splice(i, 1);
+        continue;
+      }
+      sp.x += sp.vx * dt;
+      sp.y += sp.vy * dt;
+      sp.vx *= 0.93;
+      sp.vy *= 0.93;
+      const lifeRatio = 1 - age / sp.lifeSec;
+      ctx.globalAlpha = lifeRatio * 0.85;
+      ctx.fillStyle = sparkColor;
+      ctx.fillText(sp.glyph, sp.x, sp.y);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  const shockAge = timeSec - ballState.shockwaveBornSec;
+  if (animate && shockAge >= 0 && shockAge < 0.85) {
+    const shockProgress = shockAge / 0.85;
+    const shockRad = radius * (1.05 + shockProgress * 2.4);
+    const shockAlpha = (1 - shockProgress) * 0.82;
+    const ringCount = 20;
+    const sx0 = ballState.shockwaveX + overscanTopPx;
+    const sy0 = ballState.shockwaveY + overscanTopPx;
+    ctx.font = '700 12px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.fillStyle = cachedRgba(palette.cityLight[0], palette.cityLight[1], palette.cityLight[2]);
+    ctx.globalAlpha = shockAlpha;
+    for (let i = 0; i < ringCount; i++) {
+      const ang = (Math.PI * 2 * i) / ringCount + shockProgress * 1.6;
+      const rx = sx0 + Math.cos(ang) * shockRad;
+      const ry = sy0 + Math.sin(ang) * shockRad;
+      ctx.fillText(SPARK_GLYPHS[i % SPARK_GLYPHS.length], rx, ry);
+    }
+    ctx.globalAlpha = 1;
+  }
 
   // 3. Flush-tiled Minecraft voxel blocks + crisp bright ASCII glyphs on 3D sphere
   ctx.globalCompositeOperation = 'source-over';
@@ -527,6 +981,86 @@ export function renderAsciiGlobeLayer(
         cellAlpha
       );
       ctx.fillText(glyph, drawX, py);
+    }
+  }
+
+  // 4. Ball-Lightning jagged electric corona tendrils + cursor Tesla plasma tether
+  if (animate) {
+    const arcSeedBase = Math.floor(timeSec * 18);
+    const tendrilCount = ballState.isDragging ? 9 : ballState.mode === 'dart' ? 8 : 5;
+    const arcColor = cachedRgba(palette.atmosphere[0], palette.atmosphere[1], palette.atmosphere[2]);
+    const hotColor = cachedRgba(palette.cityLight[0], palette.cityLight[1], palette.cityLight[2]);
+
+    for (let i = 0; i < tendrilCount; i++) {
+      const seed = arcSeedBase * 23 + i * 41;
+      if (!ballState.isDragging && pseudoNoise(seed + 1) < 0.25) continue;
+      const angle0 = (Math.PI * 2 * i) / tendrilCount + Math.sin(timeSec * 2.4 + i) * 0.45;
+      const angle1 = angle0 + (pseudoNoise(seed + 2) - 0.5) * 0.7;
+      const r0 = radius * 0.92;
+      const r1 = radius * (1.24 + pseudoNoise(seed + 3) * (0.38 + ballState.charge * 0.35));
+      const x0 = cx + Math.cos(angle0) * r0;
+      const y0 = cy + Math.sin(angle0) * r0;
+      const x1 = cx + Math.cos(angle1) * r1;
+      const y1 = cy + Math.sin(angle1) * r1;
+
+      drawJaggedLightningArc(
+        ctx,
+        x0,
+        y0,
+        x1,
+        y1,
+        5,
+        10 + ballState.charge * 8,
+        seed,
+        i % 2 === 0 ? hotColor : arcColor,
+        0.52 + Math.min(0.4, ballState.charge * 0.3),
+        i % 2 === 0 ? 1.5 : 1.15
+      );
+    }
+
+    // Tesla plasma tether jumping between ball lightning and nearby mouse cursor
+    if (ballState.lastPointerClientX > 0 && ballState.lastPointerClientY > 0) {
+      const ptrCanvasX = overscanTopPx + ballState.lastPointerClientX;
+      const ptrCanvasY = overscanTopPx + ballState.lastPointerClientY;
+      const ptrDist = Math.hypot(ptrCanvasX - cx, ptrCanvasY - cy);
+      const maxTetherDist = radius * (ballState.isDragging ? 5.5 : 2.65);
+
+      if (ptrDist > 4 && ptrDist < maxTetherDist) {
+        const tetherStrength = ballState.isDragging
+          ? 0.92
+          : (1 - ptrDist / maxTetherDist) * 0.75;
+        const dirX = (ptrCanvasX - cx) / ptrDist;
+        const dirY = (ptrCanvasY - cy) / ptrDist;
+        const startX = cx + dirX * radius * 0.85;
+        const startY = cy + dirY * radius * 0.85;
+
+        drawJaggedLightningArc(
+          ctx,
+          startX,
+          startY,
+          ptrCanvasX,
+          ptrCanvasY,
+          7,
+          14,
+          arcSeedBase * 37,
+          hotColor,
+          tetherStrength,
+          1.7
+        );
+        drawJaggedLightningArc(
+          ctx,
+          startX,
+          startY,
+          ptrCanvasX,
+          ptrCanvasY,
+          6,
+          20,
+          arcSeedBase * 53 + 9,
+          arcColor,
+          tetherStrength * 0.7,
+          1.2
+        );
+      }
     }
   }
 

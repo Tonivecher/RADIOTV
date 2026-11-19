@@ -1,8 +1,10 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, useReducedMotion } from 'framer-motion';
+import { getReactiveAudioEnergy } from '../audio/reactiveTelemetry';
 import { resolveChannelAsciiProfile } from '../constants/ascii';
 import { AsciiDotsRenderer } from '../utils/asciiDotsRenderer';
+import { bindBallLightningInteraction } from '../utils/asciiGlobe';
 import { safeStorage } from '../utils/storage';
 import { useSpatialMotion } from './SpatialMotion';
 
@@ -71,6 +73,7 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
     const [localRetry, setLocalRetry] = useState(0);
     const [error, setError] = useState('');
     const [preparing, setPreparing] = useState(false);
+    const [videoReady, setVideoReady] = useState(false);
     const [posterLoadedTick, setPosterLoadedTick] = useState(0);
 
     const posterUrl = `/media/evening-poster.jpg?retry=${retry}-${localRetry}`;
@@ -84,11 +87,13 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
 
     const fail = (message: string) => {
       setPreparing(false);
+      setVideoReady(false);
       setError(message);
       callbacks.current.onError(message);
     };
 
-    const { backgroundX, backgroundY, visible, setBackgroundPaused } = useSpatialMotion();
+    const { x: pointerX, y: pointerY, backgroundX, backgroundY, visible, setBackgroundPaused } =
+      useSpatialMotion();
 
     useEffect(() => {
       setBackgroundPaused(paused);
@@ -137,6 +142,7 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
         }
         cachedUrl.current = '';
         setBlobUrl('');
+        setVideoReady(false);
         previousRetry.current = retry;
         localRetryRef.current = localRetry;
       }
@@ -227,7 +233,9 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
     }, [source, retry, localRetry, reducedMotion, paused]);
 
     useEffect(() => {
+      const unbindGlobe = bindBallLightningInteraction();
       return () => {
+        unbindGlobe();
         if (cachedUrl.current) {
           URL.revokeObjectURL(cachedUrl.current);
         }
@@ -250,6 +258,9 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
           return;
         }
         confirmed = true;
+        if (!paused) {
+          setVideoReady(true);
+        }
         ready();
       };
 
@@ -329,15 +340,22 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
           video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
           video.videoWidth > 0;
         const mediaSource = hasVideoFrame ? video : posterImgRef.current;
+        const timeSec = nowMs * 0.001;
+        const energy = getReactiveAudioEnergy(timeSec);
+        const normX = window.innerWidth > 0 ? Math.max(0, Math.min(1, pointerX.get() / window.innerWidth)) : 0.5;
+        const normY = window.innerHeight > 0 ? Math.max(0, Math.min(1, pointerY.get() / window.innerHeight)) : 0.5;
 
         renderer.renderFrame(canvas, mediaSource, {
           width,
           height,
           dpr: window.devicePixelRatio || 1,
           overscanTopPx: 44,
-          timeSec: nowMs * 0.001,
+          timeSec,
           profile,
           animate,
+          audioLevel: energy.level,
+          pointerX: normX,
+          pointerY: normY,
         });
       };
 
@@ -359,6 +377,10 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
       let rafId = 0;
       let lastDrawAt = 0;
       const tick = (nowMs: number) => {
+        if (document.hidden || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+          rafId = 0;
+          return;
+        }
         if (nowMs - lastDrawAt >= TARGET_FPS_MS) {
           lastDrawAt = nowMs;
           drawOnce(nowMs, true);
@@ -371,7 +393,7 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
         observer.disconnect();
         window.cancelAnimationFrame(rafId);
       };
-    }, [channelId, paused, reducedMotion, visible, portalActive, blobUrl, posterLoadedTick]);
+    }, [channelId, paused, reducedMotion, visible, portalActive, blobUrl, posterLoadedTick, pointerX, pointerY]);
 
     const toggleVideo = () => {
       const next = !paused;
@@ -385,6 +407,7 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
     };
 
     const backgroundPaused = paused || !visible || Boolean(reducedMotion);
+    const showAurora = paused || Boolean(error) || Boolean(reducedMotion) || !videoReady;
 
     return (
       <>
@@ -419,6 +442,14 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
               </div>
             </div>
           </motion.div>
+          <div
+            className="evening-aurora"
+            data-active={showAurora ? 'true' : 'false'}
+            data-paused={!visible ? 'true' : undefined}
+            data-static={reducedMotion ? 'true' : undefined}
+          >
+            <div className="evening-aurora__layer" />
+          </div>
           <div className="evening-background__shade" />
         </div>
 
