@@ -97,6 +97,7 @@ checks.push('default-pin-rejected-without-writing-user');
 
 const browser = await chromium.launch({
   headless: true,
+  executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
   args: ['--no-sandbox'],
 });
 const errors = [];
@@ -144,8 +145,7 @@ try {
 
   const portal = page.locator('.channel-transition-portal');
   if (await portal.isVisible()) {
-    await page.locator('.channel-portal__skip').click();
-    await portal.waitFor({ state: 'hidden', timeout: 15000 });
+    await portal.waitFor({ state: 'hidden', timeout: 5000 });
   }
   assert.equal(await page.evaluate(() => document.body.style.position), '');
   assert.equal(

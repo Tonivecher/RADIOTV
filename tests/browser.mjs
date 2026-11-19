@@ -10,6 +10,7 @@ const base = process.env.RADIOTV_TEST_URL || 'http://127.0.0.1:44321';
 
 const browser = await chromium.launch({
   headless: true,
+  executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
   args: ['--no-sandbox'],
 });
 
@@ -479,7 +480,7 @@ try {
     await pageB.unroute('**/api/radio/state?*');
   });
 
-  await check('audio plays, channel portals unlock body, and all 3 themes meet visual token rules', async () => {
+  await check('audio plays, instant glitch channel transfer never locks body, and all 3 themes meet visual token rules', async () => {
     await stableClick(pageA.locator('.magnetic-cta--hero'));
     await pageA.waitForFunction(() => {
       const audio = document.querySelector('audio');
@@ -491,11 +492,14 @@ try {
     const rows = pageA.locator('.channel-lens-row');
     assert((await rows.count()) >= 3, 'Expected at least 3 channel rows');
 
-    // Main -> Deep
+    // Main -> Deep (instant glitch transfer, no scroll lock, auto-completes without user input)
     await stableClick(rows.nth(1));
-    await pageA.locator('.channel-transition-portal').waitFor({ state: 'visible' });
-    assert.equal(await pageA.locator('#metro-hero-title').innerText(), 'DEEP');
-    await pageA.mouse.wheel(0, 260);
+    assert.equal(
+      await pageA.evaluate(() => document.body.style.position),
+      ''
+    );
+    assert.equal(await pageA.locator('text=SCROLL').count(), 0);
+    await pageA.locator('.channel-transition-portal').waitFor({ state: 'hidden', timeout: 4000 });
     await pageA.waitForFunction(() => {
       const audio = document.querySelector('audio');
       return Boolean(
@@ -505,8 +509,6 @@ try {
           !audio.error
       );
     });
-    await pageA.locator('.channel-portal__skip').click();
-    await pageA.locator('.channel-transition-portal').waitFor({ state: 'hidden' });
     assert.equal(
       await pageA.evaluate(() => document.body.style.position),
       ''
@@ -515,8 +517,11 @@ try {
 
     // Deep -> DeepTech
     await stableClick(rows.nth(2));
-    await pageA.locator('.channel-transition-portal').waitFor({ state: 'visible' });
-    assert.equal(await pageA.locator('#metro-hero-title').innerText(), 'DEEP TECH');
+    assert.equal(
+      await pageA.evaluate(() => document.body.style.position),
+      ''
+    );
+    await pageA.locator('.channel-transition-portal').waitFor({ state: 'hidden', timeout: 4000 });
     await pageA.waitForFunction(() => {
       const audio = document.querySelector('audio');
       return Boolean(
@@ -526,20 +531,19 @@ try {
           !audio.error
       );
     });
-    await pageA.locator('.channel-portal__skip').click();
-    await pageA.locator('.channel-transition-portal').waitFor({ state: 'hidden' });
     assert.equal(
       await pageA.evaluate(() => document.body.style.position),
       ''
     );
     await assertThemeVisualTokens(pageA, 'afterglow');
 
-    // DeepTech -> Main via full scroll scrub
+    // DeepTech -> Main
     await stableClick(rows.nth(0));
-    await pageA.locator('.channel-transition-portal').waitFor({ state: 'visible' });
-    assert.equal(await pageA.locator('#metro-hero-title').innerText(), 'ОСНОВНОЙ');
-    await pageA.mouse.wheel(0, 1400);
-    await pageA.locator('.channel-transition-portal').waitFor({ state: 'hidden', timeout: 8000 });
+    assert.equal(
+      await pageA.evaluate(() => document.body.style.position),
+      ''
+    );
+    await pageA.locator('.channel-transition-portal').waitFor({ state: 'hidden', timeout: 4000 });
     assert.equal(
       await pageA.evaluate(() => document.body.style.position),
       ''
