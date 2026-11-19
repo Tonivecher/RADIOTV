@@ -419,6 +419,7 @@ export default function MetroHero({
       >
         <h1
           id="moscow-intro-title"
+          className="moscow-intro__title-text"
           style={{
             margin: 0,
             fontFamily: SANS,
@@ -427,12 +428,22 @@ export default function MetroHero({
             lineHeight: 1,
             letterSpacing: '-0.02em',
             color: COL_TEXT,
-            textShadow: '0 4px 30px rgba(0,0,0,0.55)',
             display: 'inline-block',
-            willChange: 'transform, filter, opacity',
+            willChange: 'transform, opacity',
           }}
         >
-          {title}
+          {title.includes(':')
+            ? title.split(':').map((part, idx, arr) => (
+                <React.Fragment key={idx}>
+                  {part}
+                  {idx < arr.length - 1 && (
+                    <span className="moscow-intro__title-colon" aria-hidden="true">
+                      :
+                    </span>
+                  )}
+                </React.Fragment>
+              ))
+            : title}
         </h1>
       </div>
 
@@ -452,6 +463,7 @@ export default function MetroHero({
           }}
         >
           <span
+            className="moscow-intro__tagline-text"
             style={{
               fontFamily: SANS,
               fontWeight: 700,
@@ -459,7 +471,6 @@ export default function MetroHero({
               lineHeight: 1.2,
               letterSpacing: '-0.01em',
               color: COL_TEXT,
-              textShadow: '0 4px 24px rgba(0,0,0,0.55)',
             }}
           >
             {tagline}

@@ -3252,10 +3252,10 @@ p {
 
 @media (max-width: 760px) {
   html {
-    scroll-padding-top: calc(108px + max(10px,env(safe-area-inset-top)));
+    scroll-padding-top: calc(114px + max(10px,env(safe-area-inset-top)));
   }
   .radio-content {
-    padding-top: calc(108px + max(10px,env(safe-area-inset-top)));
+    padding-top: calc(114px + max(10px,env(safe-area-inset-top)));
   }
   .island-header-wrap {
     top: max(10px,env(safe-area-inset-top));

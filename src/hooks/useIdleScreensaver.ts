@@ -2,11 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 
 interface UseIdleScreensaverOptions {
   enabled: boolean;
-  /** Inactivity threshold before entering screensaver mode (default: 3 minutes). */
+  /** Inactivity threshold before entering screensaver mode (default: 9 seconds). */
   timeoutMs?: number;
 }
 
-const DEFAULT_IDLE_MS = 3 * 60 * 1000;
+const DEFAULT_IDLE_MS = 9 * 1000;
 const POINTER_MOVE_THRESHOLD_PX = 3;
 
 /**
@@ -43,7 +43,11 @@ export function useIdleScreensaver({
     const scheduleIdle = () => {
       window.clearTimeout(timer);
       timer = window.setTimeout(() => {
-        if (document.hidden || isEditingField()) {
+        if (
+          document.hidden ||
+          isEditingField() ||
+          document.documentElement.hasAttribute('data-globe-drag')
+        ) {
           scheduleIdle();
           return;
         }

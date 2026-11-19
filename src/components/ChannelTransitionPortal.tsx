@@ -169,7 +169,7 @@ export function ChannelTransitionPortal({
           height,
           dpr: 1,
           overscanTopPx: 0,
-          timeSec: nowMs * 0.001 + progress * 2.2,
+          timeSec: nowMs * 0.001,
           profile: morphedProfile,
           animate: true,
           scale: 1 + surge * 0.045,
