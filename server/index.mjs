@@ -21,7 +21,20 @@ import {
   sanitizeSetRow,
 } from './db.mjs';
 import { computeHeatmap } from './waveform.mjs';
-import { sanitizedAudioPath } from './media.mjs';
+import {
+  fastFallbackAudioPath,
+  getCachedAudioInfo,
+  sanitizedAudioPath,
+  startBackgroundPrebake,
+  stopBackgroundPrebake,
+} from './media.mjs';
+import {
+  buildStreamUrlsForSet,
+  getEdgesStatusSummary,
+  isEdgeDeliveryEnabled,
+  startEdgeHealthMonitor,
+  stopEdgeHealthMonitor,
+} from './mediaEdge.mjs';
 import { resolvePublicFile } from './static.mjs';
 import {
   REACTION_META,
@@ -299,10 +312,41 @@ async function streamAudioFile(req, res, setRow) {
     });
   }
 
+  const cachedInfo = getCachedAudioInfo(setRow.filepath);
+  const edgeEnabled = isEdgeDeliveryEnabled() && process.env.RADIOTV_MEDIA_REDIRECT !== '0';
+
+  // In production with Nginx media edges enabled, immediately redirect to signed Nginx URL
+  // whenever the v2 baked file is ready (never pipe audio bytes through Node.js).
+  if (edgeEnabled && cachedInfo?.ready) {
+    const signedUrls = buildStreamUrlsForSet(setRow, '');
+    const primary = signedUrls.find((item) => item.id !== 'origin' && item.url);
+    if (primary) {
+      setCorsHeaders(res);
+      res.writeHead(302, {
+        Location: primary.url,
+        'Cache-Control': 'no-store',
+        'X-Radio-Transmission': setRow.short_code,
+      });
+      return res.end();
+    }
+  }
+
   let stat;
   let audioPath;
+  let servedExt = '.m4a';
+  let servedMime = 'audio/mp4';
+  let isImmutable = true;
   try {
-    audioPath = await sanitizedAudioPath(setRow.filepath);
+    if (edgeEnabled) {
+      // Set not baked yet during initial warm-up: serve fast (~1s) stripped copy so playback starts immediately.
+      const fallback = await fastFallbackAudioPath(setRow.filepath);
+      audioPath = fallback.path;
+      servedExt = fallback.ext;
+      servedMime = fallback.isV2 ? 'audio/mp4' : setRow.mime_type || 'audio/mp4';
+      isImmutable = fallback.isV2;
+    } else {
+      audioPath = await sanitizedAudioPath(setRow.filepath);
+    }
     stat = fs.statSync(audioPath);
   } catch {
     return sendJson(res, 404, {
@@ -312,16 +356,17 @@ async function streamAudioFile(req, res, setRow) {
   }
 
   const totalSize = stat.size;
-  const mimeType = setRow.mime_type || 'audio/mp4';
-  const ext = setRow.ext || '.m4a';
-  const safeFilename = `radiotv-live${ext}`;
+  const safeFilename = `radiotv-live${servedExt}`;
   const etag = `"${path.basename(audioPath)}"`;
 
   setCorsHeaders(res);
   res.setHeader('Accept-Ranges', 'bytes');
-  res.setHeader('Content-Type', mimeType);
+  res.setHeader('Content-Type', servedMime);
   res.setHeader('Content-Disposition', `inline; filename="${safeFilename}"`);
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader(
+    'Cache-Control',
+    isImmutable ? 'public, max-age=86400, immutable' : 'no-cache, no-transform'
+  );
   res.setHeader('X-Radio-Transmission', setRow.short_code); // ASCII station id; localized copy belongs in JSON.
   res.setHeader('ETag', etag);
 
@@ -389,7 +434,14 @@ function buildRadioStatePayload(channelId = DEFAULT_CHANNEL_ID) {
     CHANNEL_IDS.map((id) => [id, getCurrentBroadcast(id, now, availableSets)])
   );
 
-  const broadcast = broadcastsByChannel.get(normalizedChannel);
+  const broadcastRaw = broadcastsByChannel.get(normalizedChannel);
+  const activeSetRow = broadcastRaw.setId ? getInternalSetById(broadcastRaw.setId) : null;
+  const streamUrls = buildStreamUrlsForSet(activeSetRow, broadcastRaw.streamUrl, now);
+  const broadcast = {
+    ...broadcastRaw,
+    streamUrl: streamUrls[0]?.url || broadcastRaw.streamUrl,
+    streamUrls,
+  };
   const peaks = getWaveformForSet(broadcast.setId);
   const moments = getMomentsForSet(broadcast.setId);
   const heatmap = computeHeatmap(moments, broadcast.durationSec, HEATMAP_SEGMENTS);
@@ -429,6 +481,7 @@ function buildRadioStatePayload(channelId = DEFAULT_CHANNEL_ID) {
     nextShortCode: broadcast.nextShortCode,
     nextSonicTag: broadcast.nextSonicTag,
     streamUrl: broadcast.streamUrl,
+    streamUrls: broadcast.streamUrls,
     preloadNextUrl: broadcast.preloadNextUrl,
     schedule: broadcast.schedule,
     peaks,
@@ -605,6 +658,7 @@ function handleHealth(_req, res) {
     service: 'RADIOTV Live Broadcast Server',
     setsCount,
     channels: CHANNEL_IDS,
+    mediaEdges: getEdgesStatusSummary(),
     serverTime: Date.now(),
   });
 }
@@ -1142,6 +1196,8 @@ function shutdown() {
   if (isShuttingDown) return;
   isShuttingDown = true;
 
+  stopBackgroundPrebake();
+  stopEdgeHealthMonitor();
   clearInterval(syncInterval);
   for (const client of sseClients) {
     try {
@@ -1182,10 +1238,43 @@ function shutdown() {
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
+function getPrioritizedSetsForPrebake() {
+  const now = Date.now();
+  const availableSets = getAvailableSets();
+  if (availableSets.length === 0) return [];
+  const byId = new Map(availableSets.map((row) => [row.id, row]));
+  const ordered = [];
+  const seen = new Set();
+
+  const pushId = (id) => {
+    if (!id || seen.has(id)) return;
+    const row = byId.get(id);
+    if (row) {
+      seen.add(id);
+      ordered.push(row);
+    }
+  };
+
+  for (const chId of CHANNEL_IDS) {
+    const b = getCurrentBroadcast(chId, now, availableSets);
+    pushId(b.setId);
+    for (const slot of b.schedule || []) {
+      pushId(slot.setId);
+    }
+  }
+  for (const row of availableSets) {
+    pushId(row.id);
+  }
+  return ordered;
+}
+
 async function bootstrap() {
   const t0 = Date.now();
   const totalSets = await scanAndSyncSets();
   const elapsed = Date.now() - t0;
+
+  startEdgeHealthMonitor();
+  startBackgroundPrebake(getPrioritizedSetsForPrebake);
 
   server.listen(PORT, HOST, () => {
     console.log(

@@ -54,6 +54,12 @@ export interface ChatMessageItem {
   createdAt: string | number;
 }
 
+export interface StreamEdgeCandidate {
+  id: string;
+  region: string;
+  url: string;
+}
+
 interface BroadcastSlot {
   setId: string | number;
   code: string;
@@ -65,6 +71,7 @@ interface BroadcastSlot {
   nextCode: string;
   startsInSec: number;
   streamUrl: string;
+  streamUrls?: StreamEdgeCandidate[];
 }
 
 export interface RadioStatePayload {

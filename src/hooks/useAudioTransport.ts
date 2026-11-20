@@ -1,7 +1,10 @@
-import { RefObject, useCallback, useEffect, useRef, useState } from 'react';
+import { RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DspMacroState, radioDsp } from '../audio/dspEngine';
 import { LiveClock, LivePhaseLock, SyncSnapshot } from '../audio/liveSync';
 import { IDLE_SYNC } from '../constants/radio';
+import { StreamEdgeCandidate } from '../types/radio';
+
+const STALL_FAILOVER_MS = 3500;
 
 interface UseAudioTransportParams {
   channelId: string;
@@ -15,6 +18,8 @@ interface UseAudioTransportParams {
   isStateLoaded: boolean;
   stateChannelId: string;
   broadcastSetId: string | number;
+  broadcastStreamUrl?: string;
+  broadcastStreamUrls?: StreamEdgeCandidate[];
   bands: number[];
   macros: DspMacroState;
   isDspBypassed: boolean;
@@ -64,6 +69,8 @@ export function useAudioTransport({
   isStateLoaded,
   stateChannelId,
   broadcastSetId,
+  broadcastStreamUrl,
+  broadcastStreamUrls,
   bands,
   macros,
   isDspBypassed,
@@ -78,6 +85,7 @@ export function useAudioTransport({
   const dspAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const [streamRevision, setStreamRevision] = useState(0);
+  const [activeEdgeIdx, setActiveEdgeIdx] = useState(0);
   const [needsGesture, setNeedsGesture] = useState(false);
   const [audioError, setAudioError] = useState('');
   const [isAudioReady, setIsAudioReady] = useState<boolean>(false);
@@ -87,6 +95,11 @@ export function useAudioTransport({
   const [dspMediaArmed, setDspMediaArmed] = useState<boolean>(false);
 
   const activeModeRef = useRef<TransportMode>('direct');
+  const activeEdgeIdxRef = useRef<number>(0);
+  const failoverAttemptsRef = useRef<number>(0);
+  const urlRefreshTriedRef = useRef<boolean>(false);
+  const stallTimerRef = useRef<number | null>(null);
+  const lastStallTimeRef = useRef<number>(0);
   const handingOffRef = useRef<boolean>(false);
   const phaseLockRef = useRef<LivePhaseLock | null>(null);
   const playIntentRef = useRef<boolean>(false);
@@ -107,10 +120,59 @@ export function useAudioTransport({
   const handoffToDirectRef = useRef<() => void>(() => {});
   const handoffToDspRef = useRef<() => Promise<void>>(async () => {});
 
-  const audioSource =
-    isStateLoaded && stateChannelId === channelId && broadcastSetId
-      ? `/api/radio/stream/${channelId}?set=${encodeURIComponent(String(broadcastSetId))}&load=${streamRevision}`
-      : undefined;
+  const candidateEdges = useMemo<StreamEdgeCandidate[]>(() => {
+    if (!isStateLoaded || stateChannelId !== channelId || !broadcastSetId) {
+      return [];
+    }
+    if (Array.isArray(broadcastStreamUrls) && broadcastStreamUrls.length > 0) {
+      return broadcastStreamUrls.map((edge) => {
+        if (edge.url.startsWith('/api/radio/stream/')) {
+          const sep = edge.url.includes('?') ? '&' : '?';
+          return {
+            ...edge,
+            url: `${edge.url}${sep}set=${encodeURIComponent(String(broadcastSetId))}&load=${streamRevision}`,
+          };
+        }
+        return edge;
+      });
+    }
+    if (broadcastStreamUrl && (broadcastStreamUrl.startsWith('https://') || broadcastStreamUrl.startsWith('http://'))) {
+      return [{ id: 'primary', region: 'EDGE', url: broadcastStreamUrl }];
+    }
+    return [
+      {
+        id: 'origin',
+        region: 'LOCAL',
+        url: `/api/radio/stream/${channelId}?set=${encodeURIComponent(String(broadcastSetId))}&load=${streamRevision}`,
+      },
+    ];
+  }, [
+    isStateLoaded,
+    stateChannelId,
+    channelId,
+    broadcastSetId,
+    broadcastStreamUrl,
+    broadcastStreamUrls,
+    streamRevision,
+  ]);
+
+  const candidateEdgesRef = useRef<StreamEdgeCandidate[]>(candidateEdges);
+  candidateEdgesRef.current = candidateEdges;
+
+  // Reset failover state when channel or set changes.
+  useEffect(() => {
+    activeEdgeIdxRef.current = 0;
+    failoverAttemptsRef.current = 0;
+    urlRefreshTriedRef.current = false;
+    setActiveEdgeIdx(0);
+  }, [channelId, broadcastSetId]);
+
+  const clampedEdgeIdx =
+    candidateEdges.length > 0 ? activeEdgeIdx % candidateEdges.length : 0;
+  activeEdgeIdxRef.current = clampedEdgeIdx;
+
+  const activeEdge = candidateEdges[clampedEdgeIdx] || null;
+  const audioSource = activeEdge?.url;
 
   const dspAudioSource = !isDspBypassed || dspMediaArmed ? audioSource : undefined;
 
@@ -737,23 +799,88 @@ export function useAudioTransport({
     setIsPlaying(false);
   }, []);
 
-  const handleAudioError = useCallback((sourceMode: TransportMode = 'direct') => {
-    if (sourceMode === 'dsp') {
-      if (activeModeRef.current === 'dsp' && playIntentRef.current) {
-        handoffToDirectRef.current();
+  const triggerEdgeFailover = useCallback(
+    (sourceMode: TransportMode): boolean => {
+      const edges = candidateEdgesRef.current;
+      if (edges.length <= 1) {
+        return false;
       }
-      return;
-    }
-    setIsAudioReady(false);
-    setAudioError('Не удалось загрузить звук. Проверьте соединение и повторите.');
-    loadingRef.current = false;
-    resumeAfterLoadRef.current = false;
-    if (playIntentRef.current) {
-      playIntentRef.current = false;
-      radioDsp.setPlaybackIntent(false);
-      setIsPlaying(false);
-    }
-  }, []);
+      if (failoverAttemptsRef.current >= edges.length - 1) {
+        return false;
+      }
+
+      const nextIdx = (activeEdgeIdxRef.current + 1) % edges.length;
+      const nextEdge = edges[nextIdx];
+      if (!nextEdge?.url) {
+        return false;
+      }
+
+      failoverAttemptsRef.current += 1;
+      activeEdgeIdxRef.current = nextIdx;
+      const wasPlaying = playIntentRef.current;
+      loadingRef.current = true;
+      ++transportEpochRef.current;
+      playInFlightRef.current = null;
+      audioMetaLoadedRef.current = false;
+      resumeAfterLoadRef.current = wasPlaying;
+      phaseLockRef.current?.reset();
+      setAudioError('');
+      setActiveEdgeIdx(nextIdx);
+
+      // On iOS Lock Screen (hidden tab), React effects may be throttled: swap direct AVPlayer src immediately.
+      if (document.visibilityState === 'hidden' && sourceMode === 'direct' && audioRef.current) {
+        const direct = audioRef.current;
+        direct.src = nextEdge.url;
+        direct.load();
+        if (wasPlaying) {
+          void waitForMetadata(direct, 5000).then((ok) => {
+            if (!ok || !playIntentRef.current) return;
+            syncElementToLiveClock(direct);
+            void direct.play().catch(() => {});
+          });
+        }
+      }
+
+      return true;
+    },
+    [syncElementToLiveClock]
+  );
+
+  const handleAudioError = useCallback(
+    (sourceMode: TransportMode = 'direct') => {
+      // Try failing over to the backup edge (FI <-> PL) before surfacing an error or dropping playback.
+      if (sourceMode === activeModeRef.current && triggerEdgeFailover(sourceMode)) {
+        return;
+      }
+
+      if (sourceMode === 'dsp') {
+        if (activeModeRef.current === 'dsp' && playIntentRef.current) {
+          handoffToDirectRef.current();
+        }
+        return;
+      }
+
+      // If signed URL TTL expired, refresh state once to obtain fresh signed URLs.
+      if (!urlRefreshTriedRef.current && candidateEdgesRef.current.length > 0) {
+        urlRefreshTriedRef.current = true;
+        failoverAttemptsRef.current = 0;
+        resumeAfterLoadRef.current = playIntentRef.current;
+        void fetchRadioState(channelIdRef.current);
+        return;
+      }
+
+      setIsAudioReady(false);
+      setAudioError('Не удалось загрузить звук. Проверьте соединение и повторите.');
+      loadingRef.current = false;
+      resumeAfterLoadRef.current = false;
+      if (playIntentRef.current) {
+        playIntentRef.current = false;
+        radioDsp.setPlaybackIntent(false);
+        setIsPlaying(false);
+      }
+    },
+    [channelIdRef, fetchRadioState, triggerEdgeFailover]
+  );
 
   const handleAudioEnded = useCallback(
     (sourceMode: TransportMode = 'direct') => {
@@ -1007,11 +1134,95 @@ export function useAudioTransport({
     };
   }, [audioSource, bootVisibleRef, liveClock]);
 
+  // Stall watchdog: if active stream stalls/buffers for > 3.5s without advancing currentTime,
+  // seamlessly fail over to the backup media edge (FI <-> PL) while LivePhaseLock preserves phase.
+  useEffect(() => {
+    const direct = audioRef.current;
+    const dsp = dspAudioRef.current;
+    if (!direct && !dsp) {
+      return;
+    }
+
+    const clearStallTimer = () => {
+      if (stallTimerRef.current !== null) {
+        window.clearTimeout(stallTimerRef.current);
+        stallTimerRef.current = null;
+      }
+    };
+
+    const onProgress = (mode: TransportMode) => {
+      if (mode !== activeModeRef.current) return;
+      const el = mode === 'dsp' ? dsp : direct;
+      if (!el) return;
+      if (Math.abs(el.currentTime - lastStallTimeRef.current) > 0.05) {
+        lastStallTimeRef.current = el.currentTime;
+        failoverAttemptsRef.current = 0;
+        urlRefreshTriedRef.current = false;
+        clearStallTimer();
+      }
+    };
+
+    const onStallSignal = (mode: TransportMode) => {
+      if (mode !== activeModeRef.current) return;
+      if (!playIntentRef.current || handingOffRef.current || bootVisibleRef.current) return;
+      const el = mode === 'dsp' ? dsp : direct;
+      if (!el || el.paused || el.ended) return;
+      if (stallTimerRef.current !== null) return;
+
+      const snapshotTime = el.currentTime;
+      lastStallTimeRef.current = snapshotTime;
+      stallTimerRef.current = window.setTimeout(() => {
+        stallTimerRef.current = null;
+        if (mode !== activeModeRef.current || !playIntentRef.current || handingOffRef.current) {
+          return;
+        }
+        const currentEl = mode === 'dsp' ? dspAudioRef.current : audioRef.current;
+        if (!currentEl || currentEl.paused || currentEl.ended) {
+          return;
+        }
+        const stuck =
+          Math.abs(currentEl.currentTime - snapshotTime) < 0.05 &&
+          currentEl.readyState < HTMLMediaElement.HAVE_FUTURE_DATA;
+        if (stuck) {
+          triggerEdgeFailover(mode);
+        }
+      }, STALL_FAILOVER_MS);
+    };
+
+    const bind = (el: HTMLAudioElement | null, mode: TransportMode) => {
+      if (!el) return () => {};
+      const handleStall = () => onStallSignal(mode);
+      const handleFlow = () => onProgress(mode);
+      el.addEventListener('stalled', handleStall);
+      el.addEventListener('waiting', handleStall);
+      el.addEventListener('playing', handleFlow);
+      el.addEventListener('timeupdate', handleFlow);
+      el.addEventListener('canplay', handleFlow);
+      return () => {
+        el.removeEventListener('stalled', handleStall);
+        el.removeEventListener('waiting', handleStall);
+        el.removeEventListener('playing', handleFlow);
+        el.removeEventListener('timeupdate', handleFlow);
+        el.removeEventListener('canplay', handleFlow);
+      };
+    };
+
+    const unbindDirect = bind(direct, 'direct');
+    const unbindDsp = bind(dsp, 'dsp');
+
+    return () => {
+      clearStallTimer();
+      unbindDirect();
+      unbindDsp();
+    };
+  }, [audioSource, bootVisibleRef, triggerEdgeFailover]);
+
   return {
     audioRef,
     dspAudioRef,
     audioSource,
     dspAudioSource,
+    activeEdge,
     needsGesture,
     setNeedsGesture,
     audioError,

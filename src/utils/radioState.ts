@@ -166,6 +166,12 @@ export function parseRadioStateResponse(
     throw new Error('Эфир пока недоступен. Попробуйте ещё раз позже.');
   }
 
+  const isValidStreamUrl = (value: unknown): value is string =>
+    typeof value === 'string' &&
+    (value.startsWith('/api/radio/stream/') ||
+      value.startsWith('https://') ||
+      value.startsWith('http://'));
+
   const hasValidShape =
     record.ok === true &&
     Boolean(b.setId) &&
@@ -176,8 +182,7 @@ export function parseRadioStateResponse(
     Number.isFinite(b.positionSec) &&
     b.positionSec >= 0 &&
     b.positionSec <= b.durationSec &&
-    typeof b.streamUrl === 'string' &&
-    b.streamUrl.startsWith('/api/radio/stream/') &&
+    isValidStreamUrl(b.streamUrl) &&
     Array.isArray(record.channels) &&
     record.channels.some((c: unknown) => (c as { id?: string } | null)?.id === targetChannel);
 
@@ -202,6 +207,23 @@ export function parseRadioStateResponse(
       ? (record.channels as RadioChannelInfo[])
       : EMPTY_STATE.channels;
 
+  const rawStreamUrls = Array.isArray(b.streamUrls)
+    ? b.streamUrls
+    : Array.isArray(record.streamUrls)
+      ? record.streamUrls
+      : [];
+  const streamUrls = rawStreamUrls
+    .filter(
+      (item): item is { id?: unknown; region?: unknown; url?: unknown } =>
+        Boolean(item) && typeof item === 'object'
+    )
+    .filter((item) => isValidStreamUrl(item.url))
+    .map((item, idx) => ({
+      id: typeof item.id === 'string' && item.id ? item.id : `edge-${idx}`,
+      region: typeof item.region === 'string' && item.region ? item.region : 'EDGE',
+      url: String(item.url),
+    }));
+
   const state: RadioStatePayload = {
     channelId: targetChannel,
     channels,
@@ -218,6 +240,7 @@ export function parseRadioStateResponse(
         b.startsInSec ?? b.starts_in_sec ?? Math.max(10, durationSec - positionSec)
       ),
       streamUrl: String(b.streamUrl ?? ''),
+      streamUrls: streamUrls.length > 0 ? streamUrls : undefined,
     },
     peaks: Array.isArray(record.peaks)
       ? (record.peaks as number[])

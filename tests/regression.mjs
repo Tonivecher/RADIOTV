@@ -38,7 +38,13 @@ const {
   sanitizeSetRow,
 } = await import('../server/db.mjs');
 const { resolvePublicFile } = await import('../server/static.mjs');
-const { sanitizedAudioPath, FFMPEG_BIN, FFPROBE_BIN } = await import('../server/media.mjs');
+const {
+  sanitizedAudioPath,
+  hasFaststartMoovBeforeMdat,
+  FFMPEG_BIN,
+  FFPROBE_BIN,
+} = await import('../server/media.mjs');
+const { signNginxSecureLink, buildStreamUrlsForSet } = await import('../server/mediaEdge.mjs');
 const { computeHeatmap } = await import('../server/waveform.mjs');
 
 const base = process.env.RADIOTV_TEST_URL || 'http://127.0.0.1:44321';
@@ -152,18 +158,12 @@ test('static roots, hidden names, traversal and escaping symlinks', () => {
   }
 });
 
-test('all supported containers lose title/artist; decoded audio and original bytes survive', async () => {
+test('all supported containers bake to clean AAC-LC .m4a with +faststart; originals survive', async () => {
   const formatsDir = path.join(root, 'formats');
   fs.mkdirSync(formatsDir, { recursive: true });
 
   const fileHash = (filePath) =>
     crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
-  const audioHash = (filePath) =>
-    execFileSync(
-      FFMPEG_BIN,
-      ['-v', 'error', '-i', filePath, '-map', '0:a:0', '-f', 'hash', '-hash', 'sha256', '-'],
-      { encoding: 'utf8' }
-    ).trim();
 
   for (const ext of ['wav', 'mp3', 'm4a', 'flac', 'aiff', 'ogg']) {
     const src = path.join(formatsDir, `private-name.${ext}`);
@@ -174,7 +174,7 @@ test('all supported containers lose title/artist; decoded audio and original byt
       '-f',
       'lavfi',
       '-i',
-      'sine=frequency=333:duration=1',
+      'sine=frequency=333:duration=2',
       '-metadata',
       'title=RADIOTV_CANARY_TITLE',
       '-metadata',
@@ -186,16 +186,68 @@ test('all supported containers lose title/artist; decoded audio and original byt
     const before = fileHash(src);
     const clean = await sanitizedAudioPath(src);
     assert.notEqual(clean, src);
+    assert.equal(path.extname(clean), '.m4a', ext);
     assert.equal(fileHash(src), before);
 
-    const info = execFileSync(
+    const rawInfo = execFileSync(
       FFPROBE_BIN,
       ['-v', 'error', '-show_format', '-show_streams', '-of', 'json', clean],
       { encoding: 'utf8' }
     );
-    assert(!info.includes('RADIOTV_CANARY_'), ext);
+    assert(!rawInfo.includes('RADIOTV_CANARY_'), ext);
     assert(!fs.readFileSync(clean).includes(Buffer.from('RADIOTV_CANARY_')), ext);
-    assert.equal(audioHash(clean), audioHash(src), ext);
+
+    const parsed = JSON.parse(rawInfo);
+    assert.equal(parsed.streams.length, 1, ext);
+    assert.equal(parsed.streams[0].codec_name, 'aac', ext);
+    assert(String(parsed.streams[0].profile || '').toUpperCase().includes('LC'), ext);
+    assert.equal(await hasFaststartMoovBeforeMdat(clean), true, ext);
+  }
+});
+
+test('mediaEdge signs Nginx secure_link URLs and filters remote edge by manifest', async () => {
+  const set = db.prepare('SELECT * FROM sets ORDER BY seq_num LIMIT 1').get();
+  const bakedPath = await sanitizedAudioPath(set.filepath);
+  const bakedName = path.basename(bakedPath);
+
+  const secret = 'test-secure-link-secret-32chars!!';
+  const exp = 1900000000;
+  const signed = signNginxSecureLink('https://tonivecher.online/radio-media', bakedName, secret, exp);
+  const parsedUrl = new URL(signed);
+  assert.equal(parsedUrl.pathname, `/radio-media/${bakedName}`);
+  assert.equal(parsedUrl.searchParams.get('expires'), String(exp));
+  const expectedMd5 = crypto
+    .createHash('md5')
+    .update(`${exp}/radio-media/${bakedName} ${secret}`)
+    .digest('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+  assert.equal(parsedUrl.searchParams.get('md5'), expectedMd5);
+
+  const manifestFile = path.join(root, 'edge-pl-manifest.json');
+  fs.writeFileSync(manifestFile, JSON.stringify({ files: [bakedName] }), 'utf8');
+
+  const prevSecret = process.env.RADIOTV_MEDIA_SIGN_SECRET;
+  const prevEdges = process.env.RADIOTV_MEDIA_EDGES;
+  try {
+    process.env.RADIOTV_MEDIA_SIGN_SECRET = secret;
+    process.env.RADIOTV_MEDIA_EDGES = JSON.stringify([
+      { id: 'fi', region: 'FI', baseUrl: 'https://radio.tonivecher.online/media', priority: 1, local: true },
+      { id: 'pl', region: 'PL', baseUrl: 'https://tonivecher.online/radio-media', priority: 2, manifestPath: manifestFile },
+    ]);
+
+    const urls = buildStreamUrlsForSet(set, '/api/radio/stream/ch-main', 1800000000000);
+    assert.equal(urls.length, 2);
+    assert.equal(urls[0].id, 'fi');
+    assert.equal(urls[1].id, 'pl');
+    assert(urls[0].url.startsWith(`https://radio.tonivecher.online/media/${bakedName}?md5=`));
+    assert(urls[1].url.startsWith(`https://tonivecher.online/radio-media/${bakedName}?md5=`));
+  } finally {
+    if (prevSecret === undefined) delete process.env.RADIOTV_MEDIA_SIGN_SECRET;
+    else process.env.RADIOTV_MEDIA_SIGN_SECRET = prevSecret;
+    if (prevEdges === undefined) delete process.env.RADIOTV_MEDIA_EDGES;
+    else process.env.RADIOTV_MEDIA_EDGES = prevEdges;
   }
 });
 
@@ -479,7 +531,10 @@ test('stream GET/HEAD/Range serve sanitized bytes; missing original never falls 
 
   const head = await fetch(url, { method: 'HEAD' });
   assert.equal(head.status, 200);
-  assert(head.headers.get('content-disposition').includes('radiotv-live.wav'));
+  assert(head.headers.get('content-disposition').includes('radiotv-live.m4a'));
+  assert.equal(head.headers.get('content-type'), 'audio/mp4');
+  assert.equal(head.headers.get('cache-control'), 'public, max-age=86400, immutable');
+  assert.equal(head.headers.get('accept-ranges'), 'bytes');
   assert(head.headers.get('etag'));
 
   const staleIfRange = await fetch(url, {

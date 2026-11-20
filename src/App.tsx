@@ -81,6 +81,8 @@ export const App: React.FC = () => {
     isStateLoaded: radioLive.isStateLoaded,
     stateChannelId: radioLive.radioState.channelId,
     broadcastSetId: radioLive.radioState.broadcast.setId,
+    broadcastStreamUrl: radioLive.radioState.broadcast.streamUrl,
+    broadcastStreamUrls: radioLive.radioState.broadcast.streamUrls,
     bands: dsp.bands,
     macros: dsp.macros,
     isDspBypassed: dsp.isDspBypassed,

@@ -137,7 +137,9 @@ try {
     const audio = document.querySelector('audio');
     return Boolean(
       audio &&
-        audio.currentSrc.includes('ch-deep') &&
+        (audio.currentSrc.includes('ch-deep') ||
+          audio.currentSrc.includes('/media/') ||
+          audio.currentSrc.includes('/radio-media/')) &&
         audio.readyState >= 2 &&
         !audio.error
     );
