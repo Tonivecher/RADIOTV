@@ -667,7 +667,7 @@ p {
 
 .ascii-dancer--right {
   right: calc(var(--dancer-w) * -0.5 + 20px);
-  bottom: calc(100% - 50px);
+  bottom: calc(100% - 24px);
 }
 
 .ascii-dancer__canvas {
@@ -2524,7 +2524,7 @@ p {
   }
   .ascii-dancer--right {
     right: calc(var(--dancer-w) * -0.5 + 13px);
-    bottom: calc(100% - 30px);
+    bottom: calc(100% - 18px);
   }
   .hero-display-title {
     font-size: 35px;

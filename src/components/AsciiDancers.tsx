@@ -20,6 +20,7 @@ interface Limb {
   f2: number;
 }
 interface Pose {
+  hairSwing: number;
   hipX: number;
   hop: number;
   lean: number;
@@ -38,7 +39,37 @@ interface DancerPalette {
   body: Rgb;
   legs: Rgb;
   accent: Rgb;
+  hair: Rgb;
 }
+
+interface BodyStyle {
+  shoulderW: number;
+  hipW: number;
+  torsoLow: number;
+  torsoHigh: number;
+  headR: number;
+  thigh: number;
+  ponytail: boolean;
+}
+
+const MALE_STYLE: BodyStyle = {
+  shoulderW: 3.9,
+  hipW: 1.85,
+  torsoLow: 2.5,
+  torsoHigh: 3.5,
+  headR: 2.8,
+  thigh: 1.8,
+  ponytail: false,
+};
+const FEMALE_STYLE: BodyStyle = {
+  shoulderW: 2.9,
+  hipW: 2.35,
+  torsoLow: 2.45,
+  torsoHigh: 2.3,
+  headR: 2.65,
+  thigh: 1.65,
+  ponytail: true,
+};
 
 const hex = (value: string): Rgb => {
   const n = Number.parseInt(value.replace('#', ''), 16);
@@ -54,6 +85,7 @@ const PALETTES: Record<string, { left: DancerPalette; right: DancerPalette; glow
       body: hex('#e88b48'),
       legs: hex('#d9a066'),
       accent: hex('#fff1d0'),
+      hair: hex('#8a4a2a'),
     },
     right: {
       head: hex('#e2f2d8'),
@@ -61,6 +93,7 @@ const PALETTES: Record<string, { left: DancerPalette; right: DancerPalette; glow
       body: hex('#78bd8e'),
       legs: hex('#9bbfd8'),
       accent: hex('#f8e6b8'),
+      hair: hex('#6b3b25'),
     },
     glow: 'rgba(234, 185, 138, 0.55)',
   },
@@ -71,6 +104,7 @@ const PALETTES: Record<string, { left: DancerPalette; right: DancerPalette; glow
       body: hex('#e8625c'),
       legs: hex('#d98a92'),
       accent: hex('#ffebe0'),
+      hair: hex('#7a2a35'),
     },
     right: {
       head: hex('#fce4c8'),
@@ -78,6 +112,7 @@ const PALETTES: Record<string, { left: DancerPalette; right: DancerPalette; glow
       body: hex('#e69a68'),
       legs: hex('#d98878'),
       accent: hex('#fff0d8'),
+      hair: hex('#5a2f1e'),
     },
     glow: 'rgba(232, 137, 128, 0.55)',
   },
@@ -88,6 +123,7 @@ const PALETTES: Record<string, { left: DancerPalette; right: DancerPalette; glow
       body: hex('#9c80f4'),
       legs: hex('#84a8ee'),
       accent: hex('#f6ecff'),
+      hair: hex('#4a3a8c'),
     },
     right: {
       head: hex('#fce4c4'),
@@ -95,18 +131,20 @@ const PALETTES: Record<string, { left: DancerPalette; right: DancerPalette; glow
       body: hex('#e4a070'),
       legs: hex('#b49ee0'),
       accent: hex('#fff2d8'),
+      hair: hex('#6a3a2a'),
     },
     glow: 'rgba(189, 168, 242, 0.55)',
   },
 };
 
-const COLS = 26;
+const COLS = 32;
 const ROWS = 38;
 const SS = 3; // supersampling before the volume is converted to glyphs
 const GROUND_Y = ROWS - 3.2;
 const HIP_BASE_Y = 21;
 const RAMP = ['.', ':', '-', '=', '+', '*', '#', '%', '@'];
 const LIGHT = { x: -0.55, y: -0.83 };
+const THICK = 1.16;
 
 const limb = (a1: number, f1: number, a2: number, f2: number): Limb => ({ a1, f1, a2, f2 });
 const dirOf = (a: number, f: number): V3 => ({
@@ -127,50 +165,260 @@ const rotY = (p: V3, g: number): V3 => {
 const clamp255 = (n: number) => Math.max(0, Math.min(255, Math.round(n)));
 const tone = (c: Rgb, f: number) => `rgb(${clamp255(c[0] * f)},${clamp255(c[1] * f)},${clamp255(c[2] * f)})`;
 
-// Dancer A: pumping arms, marching knees, hip twist.
-function poseA(p: number, amp: number): Pose {
+const clamp01 = (t: number) => Math.max(0, Math.min(1, t));
+const smooth = (t: number) => {
+  const x = clamp01(t);
+  return x * x * (3 - 2 * x);
+};
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+const lerpAngle = (a: number, b: number, t: number) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * t;
+const lerpLimb = (a: Limb, b: Limb, t: number): Limb => ({
+  a1: lerp(a.a1, b.a1, t),
+  f1: lerp(a.f1, b.f1, t),
+  a2: lerp(a.a2, b.a2, t),
+  f2: lerp(a.f2, b.f2, t),
+});
+const blendPose = (a: Pose, b: Pose, t: number): Pose => ({
+  hairSwing: lerp(a.hairSwing, b.hairSwing, t),
+  hipX: lerp(a.hipX, b.hipX, t),
+  hop: lerp(a.hop, b.hop, t),
+  lean: lerp(a.lean, b.lean, t),
+  shoulderYaw: lerp(a.shoulderYaw, b.shoulderYaw, t),
+  hipYaw: lerp(a.hipYaw, b.hipYaw, t),
+  globalYaw: lerpAngle(a.globalYaw, b.globalYaw, t),
+  headTilt: lerp(a.headTilt, b.headTilt, t),
+  armL: lerpLimb(a.armL, b.armL, t),
+  armR: lerpLimb(a.armR, b.armR, t),
+  legL: lerpLimb(a.legL, b.legL, t),
+  legR: lerpLimb(a.legR, b.legR, t),
+});
+
+// One full turn on the spot between progress `from` and `to`; `bump` peaks mid-turn (hair / arm flare).
+const spin = (u: number, from: number, to: number) => {
+  const k = (u - from) / (to - from);
+  return { yaw: Math.PI * 2 * smooth(k), bump: k > 0 && k < 1 ? Math.sin(Math.PI * k) : 0 };
+};
+
+const legsBounce = (p: number, amp: number, wide: number) => {
+  const sq = 0.5 + 0.5 * Math.cos(2 * Math.PI * p);
+  return {
+    hop: (1 - sq) * 0.7 * amp,
+    legL: limb(-(wide + 0.1 * sq), 0.38 * sq * amp, -0.1, -0.75 * sq * amp),
+    legR: limb(wide + 0.1 * sq, 0.38 * sq * amp, 0.1, -0.75 * sq * amp),
+  };
+};
+const legsMarch = (p: number, amp: number) => {
   const s = Math.sin(Math.PI * p);
-  const c = Math.cos(Math.PI * p);
-  const b = Math.abs(s);
-  const half = Math.sin(Math.PI * p * 0.5);
   const liftL = Math.max(0, s);
   const liftR = Math.max(0, -s);
   return {
-    hipX: half * 1.2 * amp,
-    hop: b * 1.1 * amp,
-    lean: half * 0.1 * amp,
-    shoulderYaw: half * 0.55 * amp,
-    hipYaw: -half * 0.3 * amp,
-    globalYaw: Math.sin(Math.PI * p * 0.25) * 0.32,
-    headTilt: c * 0.12 * amp,
-    armL: limb(-(2.35 + 0.45 * s * amp), 0.12, -(2.9 + 0.55 * b * amp), 0.2),
-    armR: limb(2.35 - 0.45 * s * amp, 0.12, 2.9 + 0.55 * (1 - b) * amp, 0.2),
-    legL: limb(-0.17, 0.9 * liftL * amp, -0.1, (0.9 - 1.5) * liftL * amp - 0.04),
-    legR: limb(0.17, 0.9 * liftR * amp, 0.1, (0.9 - 1.5) * liftR * amp - 0.04),
+    hop: Math.abs(s) * 1.0 * amp,
+    legL: limb(-0.17, 0.9 * liftL * amp, -0.1, -0.6 * liftL * amp - 0.04),
+    legR: limb(0.17, 0.9 * liftR * amp, 0.1, -0.6 * liftR * amp - 0.04),
   };
+};
+const legsTogether = (p: number, amp: number) => {
+  const bob = 0.5 + 0.5 * Math.cos(2 * Math.PI * p);
+  return {
+    hop: (1 - bob) * 0.9 * amp,
+    legL: limb(-0.06, 0.1 * bob, -0.03, -0.18 * bob),
+    legR: limb(0.06, 0.1 * bob, 0.03, -0.18 * bob),
+  };
+};
+
+// Arm that is raised (k=1) or lowered (k=0); the forearm trails for a natural whip.
+const armLeft = (k: number, trail: number, flare = 0): Limb => {
+  const a1 = -(0.42 + 2.4 * k + flare);
+  return limb(a1, 0.1 + 0.25 * (1 - k), a1 - (0.35 + trail) * (0.4 + 0.6 * k) - 0.2 * (1 - k), 0.35 * (1 - k));
+};
+const armRight = (k: number, trail: number, flare = 0): Limb => {
+  const a1 = 0.42 + 2.4 * k + flare;
+  return limb(a1, 0.1 + 0.25 * (1 - k), a1 + (0.35 + trail) * (0.4 + 0.6 * k) + 0.2 * (1 - k), 0.35 * (1 - k));
+};
+
+type Move = (p: number, u: number, amp: number) => Pose;
+
+const neutral = (): Pose => ({
+  hairSwing: 0,
+  hipX: 0,
+  hop: 0,
+  lean: 0,
+  shoulderYaw: 0,
+  hipYaw: 0,
+  globalYaw: 0,
+  headTilt: 0,
+  armL: armLeft(0, 0),
+  armR: armRight(0, 0),
+  legL: limb(-0.17, 0, -0.1, 0),
+  legR: limb(0.17, 0, 0.1, 0),
+});
+
+// ---- He: loud, wide, athletic moves --------------------------------------------------------
+const MALE_MOVES: Move[] = [
+  // Alternating pump: one hand rockets up while the other drops
+  (p, _u, amp) => {
+    const s = Math.sin(Math.PI * p);
+    const half = Math.sin(Math.PI * p * 0.5);
+    const k = 0.5 + 0.5 * s;
+    return {
+      ...neutral(),
+      ...legsMarch(p, amp),
+      hairSwing: 0,
+      hipX: half * 1.2 * amp,
+      lean: half * 0.1 * amp,
+      shoulderYaw: half * 0.6 * amp,
+      hipYaw: -half * 0.3 * amp,
+      globalYaw: Math.sin(Math.PI * p * 0.25) * 0.4,
+      headTilt: Math.cos(Math.PI * p) * 0.14 * amp,
+      armL: armLeft(k, 0.2 * s),
+      armR: armRight(1 - k, -0.2 * s),
+    };
+  },
+  // Disco point: diagonal arm up, opposite arm low, held for two beats, then switch
+  (p, _u, amp) => {
+    const m = Math.sin(Math.PI * p * 0.5);
+    const k = smooth(0.5 + m * 0.9);
+    const b = Math.abs(Math.sin(Math.PI * p));
+    return {
+      ...neutral(),
+      ...legsBounce(p, amp, 0.3),
+      hipX: m * 1.5 * amp,
+      lean: m * 0.14 * amp,
+      shoulderYaw: m * 0.4 * amp,
+      hipYaw: -m * 0.5 * amp,
+      globalYaw: m * 0.5,
+      headTilt: m * 0.18,
+      armL: armLeft(1 - k, 0.3 * b),
+      armR: armRight(k, 0.3 * b),
+    };
+  },
+  // Spin: full turn on the spot, arms thrown wide, then a landing bounce
+  (p, u, amp) => {
+    const sp = spin(u, 0.04, 0.6);
+    const flare = sp.bump * 0.0;
+    const phase = Math.sin(Math.PI * p);
+    return {
+      ...neutral(),
+      ...legsTogether(p, amp),
+      hairSwing: sp.bump,
+      globalYaw: sp.yaw,
+      shoulderYaw: -sp.bump * 0.2,
+      // one hand slices the air overhead, the other stays wide for balance
+      armL: limb(-(1.35 + flare + 0.2 * phase), 0.0, -(1.35 + flare + 0.2 * phase) - 0.2, 0),
+      armR: armRight(0.75 + 0.2 * sp.bump + 0.1 * phase, 0.15 * phase),
+    };
+  },
+  // Groove wave: both arms ripple through the air, shoulders roll, quarter turns
+  (p, _u, amp) => {
+    const s = Math.sin(Math.PI * p);
+    const half = Math.sin(Math.PI * p * 0.5);
+    return {
+      ...neutral(),
+      ...legsBounce(p, amp, 0.32),
+      hipX: -half * 1.0 * amp,
+      lean: -half * 0.1 * amp,
+      shoulderYaw: half * 0.5 * amp,
+      hipYaw: -half * 0.4 * amp,
+      globalYaw: Math.sin(Math.PI * p * 0.25 + 1) * 0.7,
+      headTilt: s * 0.16 * amp,
+      armL: armLeft(0.55 + 0.45 * Math.sin(Math.PI * p + 0.5), 0.5 * Math.sin(Math.PI * p - 0.6)),
+      armR: armRight(0.55 + 0.45 * Math.sin(Math.PI * p + 0.5 + Math.PI), 0.5 * Math.sin(Math.PI * p - 0.6 + Math.PI)),
+    };
+  },
+];
+
+// ---- She: fluid, hip-led moves, pirouettes ----------------------------------------------------
+const FEMALE_MOVES: Move[] = [
+  // Hip sway: slow figure-8 with one hand overhead and the other trailing low
+  (p, _u, amp) => {
+    const half = Math.sin(Math.PI * p * 0.5);
+    const k = 0.5 + 0.5 * half;
+    return {
+      ...neutral(),
+      ...legsBounce(p, amp * 0.7, 0.2),
+      hairSwing: half * 0.7,
+      hipX: half * 1.9 * amp,
+      lean: -half * 0.16 * amp,
+      shoulderYaw: -half * 0.5 * amp,
+      hipYaw: half * 0.65 * amp,
+      globalYaw: Math.sin(Math.PI * p * 0.25) * 0.5,
+      headTilt: -half * 0.22,
+      armL: armLeft(k, 0.55 * Math.sin(Math.PI * p * 0.5 - 0.8)),
+      armR: armRight(1 - k, 0.55 * Math.sin(Math.PI * p * 0.5 + 2.3)),
+    };
+  },
+  // Pump: alternate high reaches, opposite to his rhythm
+  (p, _u, amp) => {
+    const c = Math.cos(Math.PI * p);
+    const k = 0.5 + 0.5 * c;
+    return {
+      ...neutral(),
+      ...legsBounce(p, amp, 0.24),
+      hairSwing: c * 0.5,
+      hipX: Math.sin(Math.PI * p * 0.5) * 1.3 * amp,
+      lean: Math.sin(Math.PI * p * 0.5) * 0.1 * amp,
+      shoulderYaw: Math.sin(Math.PI * p * 0.5) * 0.4 * amp,
+      hipYaw: -Math.sin(Math.PI * p * 0.5) * 0.5 * amp,
+      globalYaw: Math.sin(Math.PI * p * 0.25 + 1.5) * 0.45,
+      headTilt: c * 0.14,
+      armL: armLeft(1 - k, 0.25 * c),
+      armR: armRight(k, -0.25 * c),
+    };
+  },
+  // Pirouette: both hands overhead, a graceful full turn with flying hair
+  (p, u, amp) => {
+    const sp = spin(u, 0.05, 0.64);
+    const lift = sp.bump;
+    return {
+      ...neutral(),
+      ...legsTogether(p, amp * 1.15),
+      hop: legsTogether(p, amp * 1.15).hop + lift * 0.9,
+      hairSwing: 0.4 + sp.bump * 1.6,
+      globalYaw: sp.yaw,
+      lean: 0,
+      armL: armLeft(0.95, 0.1, 0),
+      armR: armRight(0.95, -0.1, 0),
+      legR: limb(0.1, -0.15 * lift, 0.25 * lift, -1.1 * lift),
+    };
+  },
+  // Flow: one arm sweeps up while the other falls, hips circle, a quarter turn back and forth
+  (p, _u, amp) => {
+    const m = Math.sin(Math.PI * p * 0.5);
+    const b = Math.abs(Math.sin(Math.PI * p));
+    return {
+      ...neutral(),
+      ...legsBounce(p, amp * 0.8, 0.28),
+      hairSwing: m * 0.9,
+      hipX: -m * 1.5 * amp,
+      lean: m * 0.14 * amp,
+      shoulderYaw: m * 0.45 * amp,
+      hipYaw: -m * 0.6 * amp,
+      globalYaw: Math.PI * 0.55 * (0.5 - 0.5 * Math.cos(Math.PI * p * 0.5)),
+      headTilt: -m * 0.2,
+      armL: armLeft(smooth(0.5 - m * 0.8), 0.4 * b),
+      armR: armRight(smooth(0.5 + m * 0.8), 0.4 * b),
+    };
+  },
+];
+
+const MOVE_BEATS = 4;
+const BLEND_BEATS = 0.6;
+
+function choreography(moves: Move[], order: number[], p: number, amp: number): Pose {
+  const total = order.length;
+  const idx = Math.floor(p / MOVE_BEATS);
+  const local = p - idx * MOVE_BEATS;
+  const cur = moves[order[((idx % total) + total) % total]];
+  const nxt = moves[order[(((idx + 1) % total) + total) % total]];
+  const base = cur(p, local / MOVE_BEATS, amp);
+  const blendStart = MOVE_BEATS - BLEND_BEATS;
+  if (local <= blendStart) return base;
+  const t = smooth((local - blendStart) / BLEND_BEATS);
+  return blendPose(base, nxt(p, 0, amp), t);
 }
 
-// Dancer B: bouncy knees, flowing arm waves, shoulder roll.
-function poseB(p: number, amp: number): Pose {
-  const s = Math.sin(Math.PI * p);
-  const b = Math.abs(s);
-  const sq = 0.5 + 0.5 * Math.cos(2 * Math.PI * p);
-  const wave = Math.sin(Math.PI * p);
-  const half = Math.sin(Math.PI * p * 0.5 + 1);
-  return {
-    hipX: -half * 1.0 * amp,
-    hop: (1 - sq) * 0.7 * amp,
-    lean: -half * 0.09 * amp,
-    shoulderYaw: half * 0.5 * amp,
-    hipYaw: -half * 0.35 * amp,
-    globalYaw: Math.sin(Math.PI * p * 0.25 + 2) * 0.3,
-    headTilt: s * 0.16 * amp,
-    armL: limb(-(1.35 + 0.4 * wave * amp), 0.2, -(1.35 + 0.4 * wave * amp) - 0.75 * Math.sin(Math.PI * p + 1.2) * amp - 0.35, 0.1),
-    armR: limb(1.35 - 0.4 * wave * amp, 0.2, 1.35 - 0.4 * wave * amp + 0.75 * Math.sin(Math.PI * p + 1.2) * amp + 0.35, 0.1),
-    legL: limb(-(0.3 + 0.12 * sq), 0.4 * sq * amp, -(0.12 + 0.05 * b), -0.85 * sq * amp),
-    legR: limb(0.3 + 0.12 * sq, 0.4 * sq * amp, 0.12 + 0.05 * b, -0.85 * sq * amp),
-  };
-}
+const poseA = (p: number, amp: number): Pose => choreography(MALE_MOVES, [0, 1, 2, 3], p, amp);
+const poseB = (p: number, amp: number): Pose => choreography(FEMALE_MOVES, [0, 3, 1, 2], p, amp);
 
 interface Projected {
   x: number;
@@ -184,12 +432,12 @@ interface DrawItem {
   draw: (ctx: CanvasRenderingContext2D) => void;
 }
 
-function buildFigure(pose: Pose, pal: DancerPalette): { items: DrawItem[]; hop: number } {
-  const hipR = (sx: number): V3 => rotY({ x: sx * 1.9, y: 0, z: 0 }, pose.hipYaw);
+function buildFigure(pose: Pose, pal: DancerPalette, st: BodyStyle): { items: DrawItem[]; hop: number } {
+  const hipR = (sx: number): V3 => rotY({ x: sx * st.hipW, y: 0, z: 0 }, pose.hipYaw);
   const leanX = Math.sin(pose.lean);
   const leanY = Math.cos(pose.lean);
   const neckBase: V3 = { x: leanX * 8.2, y: -leanY * 8.2, z: 0 };
-  const shoulderOff = (sx: number): V3 => rotY({ x: sx * 3.3, y: 0, z: 0 }, pose.shoulderYaw);
+  const shoulderOff = (sx: number): V3 => rotY({ x: sx * st.shoulderW, y: 0, z: 0 }, pose.shoulderYaw);
   const sOffL = shoulderOff(-1);
   const sOffR = shoulderOff(1);
   const sL: V3 = { x: neckBase.x + sOffL.x, y: neckBase.y, z: sOffL.z };
@@ -215,6 +463,19 @@ function buildFigure(pose: Pose, pal: DancerPalette): { items: DrawItem[]; hop: 
     z: 0.3,
   };
 
+  const headYawLocal = pose.shoulderYaw * 0.6;
+  const hairBackLocal = (() => {
+    const o = rotY({ x: 0, y: -0.5, z: -1.0 }, headYawLocal);
+    return { x: head.x + o.x, y: head.y + o.y, z: head.z + o.z };
+  })();
+  const ponyRoot = (() => {
+    const o = rotY({ x: 2.0, y: -0.2, z: -1.8 }, headYawLocal);
+    return { x: head.x + o.x, y: head.y + o.y, z: head.z + o.z };
+  })();
+  const sw = pose.hairSwing;
+  const ponyMid: V3 = { x: ponyRoot.x + 0.6 + sw * 2.6, y: ponyRoot.y + 2.7, z: ponyRoot.z - 0.9 };
+  const ponyEnd: V3 = { x: ponyMid.x + sw * 3.2, y: ponyMid.y + 2.5, z: ponyMid.z - 0.4 };
+
   const world = (p: V3): V3 => {
     const r = rotY(p, pose.globalYaw);
     return { x: r.x + pose.hipX, y: r.y, z: r.z };
@@ -224,6 +485,8 @@ function buildFigure(pose: Pose, pal: DancerPalette): { items: DrawItem[]; hop: 
     eL: world(elbowL), eR: world(elbowR), wL: world(wristL), wR: world(wristR),
     kL: world(kneeL), kR: world(kneeR), aL: world(ankleL), aR: world(ankleR),
     tL: world(toeL), tR: world(toeR), nb: world(neckBase), head: world(head),
+    skirtL: world({ x: hL.x - 3.0 - Math.abs(pose.hairSwing) * 1.8, y: hL.y + 6.0, z: hL.z }), skirtR: world({ x: hR.x + 3.0 + Math.abs(pose.hairSwing) * 1.8, y: hR.y + 6.0, z: hR.z }),
+    hairBack: world(hairBackLocal), ponyRoot: world(ponyRoot), ponyMid: world(ponyMid), ponyEnd: world(ponyEnd),
     hip: world({ x: 0, y: 0, z: 0 }),
   };
 
@@ -243,7 +506,7 @@ function buildFigure(pose: Pose, pal: DancerPalette): { items: DrawItem[]; hop: 
     items.push({
       z: p.z,
       draw: (ctx) => {
-        const rr = r * p.k;
+        const rr = r * p.k * THICK;
         const df = depthShade(p.z);
         const g = ctx.createRadialGradient(p.x + LIGHT.x * rr * 0.55, p.y + LIGHT.y * rr * 0.55, rr * 0.08, p.x, p.y, rr);
         g.addColorStop(0, tone(col, 1.55 * df));
@@ -261,8 +524,8 @@ function buildFigure(pose: Pose, pal: DancerPalette): { items: DrawItem[]; hop: 
     items.push({
       z: (a.z + b.z) / 2,
       draw: (ctx) => {
-        const ra = r1 * a.k;
-        const rb = r2 * b.k;
+        const ra = r1 * a.k * THICK;
+        const rb = r2 * b.k * THICK;
         const dx = b.x - a.x;
         const dyy = b.y - a.y;
         const len = Math.hypot(dx, dyy);
@@ -309,17 +572,44 @@ function buildFigure(pose: Pose, pal: DancerPalette): { items: DrawItem[]; hop: 
     eL: proj(W.eL), eR: proj(W.eR), wL: proj(W.wL), wR: proj(W.wR),
     kL: proj(W.kL), kR: proj(W.kR), aL: proj(W.aL), aR: proj(W.aR),
     tL: proj(W.tL), tR: proj(W.tR),
+    skirtL: proj(W.skirtL), skirtR: proj(W.skirtR),
+    hairBack: proj(W.hairBack), ponyRoot: proj(W.ponyRoot), ponyMid: proj(W.ponyMid), ponyEnd: proj(W.ponyEnd),
   };
 
   // Legs
-  capsule(P.hL, P.kL, 1.7, 1.35, pal.legs);
-  capsule(P.kL, P.aL, 1.35, 1.0, pal.legs);
+  capsule(P.hL, P.kL, st.thigh, st.thigh * 0.78, pal.legs);
+  capsule(P.kL, P.aL, st.thigh * 0.78, 1.0, pal.legs);
   capsule(P.aL, P.tL, 1.05, 0.85, pal.accent);
-  capsule(P.hR, P.kR, 1.7, 1.35, pal.legs);
-  capsule(P.kR, P.aR, 1.35, 1.0, pal.legs);
+  capsule(P.hR, P.kR, st.thigh, st.thigh * 0.78, pal.legs);
+  capsule(P.kR, P.aR, st.thigh * 0.78, 1.0, pal.legs);
   capsule(P.aR, P.tR, 1.05, 0.85, pal.accent);
   // Torso
-  capsule(P.hip, P.nb, 2.4, 3.1, pal.body);
+  capsule(P.hip, P.nb, st.torsoLow, st.torsoHigh, pal.body);
+  if (st.ponytail) {
+    // Flowing skirt: flares out on turns and catches light like cloth
+    items.push({
+      z: P.hip.z + 0.9,
+      draw: (ctx) => {
+        const df = depthShade(P.hip.z);
+        const g = ctx.createLinearGradient(P.hL.x, P.hL.y - 2, P.skirtR.x, P.skirtR.y + 2);
+        g.addColorStop(0, tone(pal.accent, 1.0 * df));
+        g.addColorStop(0.5, tone(pal.arms, 1.0 * df));
+        g.addColorStop(1, tone(pal.body, 0.7 * df));
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.moveTo(P.hL.x - 0.4, P.hL.y - 1.2);
+        ctx.lineTo(P.hR.x + 0.4, P.hR.y - 1.2);
+        ctx.quadraticCurveTo(P.skirtR.x + 0.8, P.skirtR.y - 2.5, P.skirtR.x, P.skirtR.y);
+        ctx.quadraticCurveTo((P.skirtL.x + P.skirtR.x) / 2, P.skirtR.y + 1.6, P.skirtL.x, P.skirtL.y);
+        ctx.quadraticCurveTo(P.skirtL.x - 0.8, P.skirtL.y - 2.5, P.hL.x - 0.4, P.hL.y - 1.2);
+        ctx.closePath();
+        ctx.fill();
+      },
+    });
+    // Fitted hips / waist: a soft pelvis volume for the feminine silhouette
+    sphere(P.hL, 2.15, pal.body);
+    sphere(P.hR, 2.15, pal.body);
+  }
   // Arms
   sphere(P.sL, 1.45, pal.arms);
   sphere(P.sR, 1.45, pal.arms);
@@ -330,7 +620,12 @@ function buildFigure(pose: Pose, pal: DancerPalette): { items: DrawItem[]; hop: 
   capsule(P.eR, P.wR, 1.0, 0.85, pal.arms);
   sphere(P.wR, 1.15, pal.head);
   // Head + headphones
-  sphere(P.head, 2.75, pal.head);
+  sphere(P.head, st.headR, pal.head);
+  if (st.ponytail) {
+    sphere(P.hairBack, st.headR + 0.35, pal.hair);
+    capsule(P.ponyRoot, P.ponyMid, 1.45, 1.15, pal.hair);
+    capsule(P.ponyMid, P.ponyEnd, 1.15, 0.55, pal.hair);
+  }
   const headYaw = pose.globalYaw + pose.shoulderYaw * 0.6;
   const cupL = proj(world({ x: head.x + Math.cos(headYaw) * -2.85, y: head.y + 0.2, z: head.z + Math.sin(headYaw) * 2.85 }));
   const cupR = proj(world({ x: head.x + Math.cos(headYaw) * 2.85, y: head.y + 0.2, z: head.z - Math.sin(headYaw) * 2.85 }));
@@ -391,7 +686,7 @@ function createOffscreen(w: number, h: number): [HTMLCanvasElement, CanvasRender
 
 function renderDancer(d: DancerRuntime, pal: DancerPalette, amp: number, cell: number, dpr: number): void {
   const pose = d.poseFn(d.phase, amp);
-  const { items } = buildFigure(pose, pal);
+  const { items } = buildFigure(pose, pal, d.side === 'left' ? MALE_STYLE : FEMALE_STYLE);
 
   d.hiCtx.setTransform(1, 0, 0, 1, 0, 0);
   d.hiCtx.clearRect(0, 0, d.hi.width, d.hi.height);
@@ -475,7 +770,7 @@ export const AsciiDancers: React.FC<AsciiDancersProps> = ({ channelId }) => {
 
     const layout = () => {
       const mobile = window.matchMedia('(max-width: 760px)').matches;
-      cell = mobile ? 3.4 : 4.3;
+      cell = mobile ? 3.5 : 5.0;
       dpr = Math.min(2, window.devicePixelRatio || 1);
       for (const d of dancers) {
         d.canvas.width = Math.round(COLS * cell * dpr);
