@@ -12,6 +12,7 @@ import {
 } from './icons/RadioIcons';
 import { FloatPanel } from './SpatialMotion';
 import { WaveformTimeline } from './WaveformTimeline';
+import { AsciiDancers } from './AsciiDancers';
 import { AttractPlayButton } from './living/AttractPlayButton';
 import { DecodeText } from './living/DecodeText';
 import { GlitchText } from './living/GlitchText';
@@ -154,14 +155,17 @@ export const HeroTransportStage: React.FC<HeroTransportStageProps> = ({
                 <DecodeText text={activeGenreTag} className="hero-eyebrow-tag" />
               </span>
             </div>
-            <GlitchText
-              as="h1"
-              text="ToniVecherRadio"
-              trigger="both"
-              intensity="subtle"
-              interactiveShadow
-              className="hero-display-title"
-            />
+            <div className="hero-title-stage">
+              <AsciiDancers channelId={channelId} />
+              <GlitchText
+                as="h1"
+                text="ToniVecherRadio"
+                trigger="both"
+                intensity="subtle"
+                interactiveShadow
+                className="hero-display-title"
+              />
+            </div>
             <p className="hero-lead-copy">
               Три канала без треклистов. Жми плэй, кидай отметки в сет.
             </p>

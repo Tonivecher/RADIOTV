@@ -462,6 +462,9 @@ const worldState = {
   titleV: 0.27,
   titleRxU: 0.2,
   titleRyV: 0.14,
+  // Cached screen-space obstacles for the two ASCII dancers above "T" and "o"
+  lastDancerMeasureMs: 0,
+  dancerObstacles: [] as Array<{ u: number; v: number; radiusPx: number }>,
 };
 
 function randomOrbitWaitSec(): number {
@@ -531,8 +534,36 @@ function refreshTitleAnchor(viewportW: number, viewportH: number): void {
   );
   worldState.titleTargetRyV = Math.max(
     0.09,
-    Math.min(0.22, (rect.height * 0.5 + padPx * 0.92) / viewportH)
+    Math.min(0.24, (rect.height * 0.5 + padPx * 1.05 + 26) / viewportH)
   );
+}
+
+function refreshDancerObstacles(viewportW: number, viewportH: number): void {
+  const nowMs = performance.now();
+  if (nowMs - worldState.lastDancerMeasureMs < 350) return;
+  worldState.lastDancerMeasureMs = nowMs;
+
+  if (viewportW <= 0 || viewportH <= 0) {
+    worldState.dancerObstacles = [];
+    return;
+  }
+
+  const nodes = document.querySelectorAll<HTMLElement>('.ascii-dancer[data-ascii-dancer]');
+  const next: Array<{ u: number; v: number; radiusPx: number }> = [];
+  nodes.forEach((el) => {
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    if (rect.bottom < -40 || rect.top > viewportH + 40) return;
+    const cx = rect.left + rect.width * 0.5;
+    const cy = rect.top + rect.height * 0.5;
+    const radiusPx = Math.max(18, Math.hypot(rect.width, rect.height) * 0.5);
+    next.push({
+      u: cx / viewportW,
+      v: cy / viewportH,
+      radiusPx,
+    });
+  });
+  worldState.dancerObstacles = next;
 }
 
 /**
@@ -901,6 +932,82 @@ function resolveGlobeCollision(dt: number, viewportW: number, viewportH: number)
   }
 }
 
+/**
+ * Smoothly steers both ASCII globes around the two dancing figures above "T" and "o"
+ * so the globes gracefully arc around them without overlapping or snapping.
+ */
+function resolveDancerAvoidance(dt: number, viewportW: number, viewportH: number): void {
+  const obstacles = worldState.dancerObstacles;
+  if (obstacles.length === 0 || viewportW <= 0 || viewportH <= 0) return;
+
+  for (const ball of worldState.globes) {
+    if (ball.isDragging) continue;
+
+    let bx = ball.u * viewportW;
+    let by = ball.v * viewportH;
+    let vx = ball.vu * viewportW;
+    let vy = ball.vv * viewportH;
+
+    for (const obs of obstacles) {
+      const ox = obs.u * viewportW;
+      const oy = obs.v * viewportH;
+      let dx = bx - ox;
+      let dy = by - oy;
+      let dist = Math.hypot(dx, dy);
+
+      const hardRadius = ball.screenRadius + obs.radiusPx + 14;
+      const softRadius = hardRadius + 38;
+      if (dist >= softRadius) continue;
+
+      if (dist < 0.001) {
+        dx = ball.id === 0 ? 1 : -1;
+        dy = -0.5;
+        dist = Math.hypot(dx, dy);
+      }
+
+      const nx = dx / dist;
+      const ny = dy / dist;
+      const proximity = clamp01((softRadius - dist) / (softRadius - hardRadius));
+
+      // Gentle radial cushion + tangential glide so the globe arcs gracefully around the dancer
+      const tx = -ny;
+      const ty = nx;
+      const tangentSign = vx * tx + vy * ty >= 0 ? 1 : -1;
+      const steerAccelPx = (75 + proximity * 240) * proximity;
+      const glideAccelPx = (48 + proximity * 95) * proximity * tangentSign;
+
+      vx += (nx * steerAccelPx + tx * glideAccelPx) * dt;
+      vy += (ny * steerAccelPx + ty * glideAccelPx) * dt;
+
+      // Hard clearance guard: never let the globe overlap a dancer's body
+      if (dist < hardRadius) {
+        const overlap = hardRadius - dist;
+        const vn = vx * nx + vy * ny;
+        if (vn < 0) {
+          vx -= nx * vn * 1.25;
+          vy -= ny * vn * 1.25;
+        }
+        const push = overlap * Math.min(0.55, dt * 14);
+        bx += nx * push;
+        by += ny * push;
+
+        // If the globe's autonomous target sits inside the dancer's zone, nudge it clear
+        const tdx = ball.targetU * viewportW - ox;
+        const tdy = ball.targetV * viewportH - oy;
+        if (Math.hypot(tdx, tdy) < softRadius) {
+          ball.targetU = Math.max(0.1, Math.min(0.9, (ox + nx * (softRadius + 40)) / viewportW));
+          ball.targetV = Math.max(0.1, Math.min(0.66, (oy + ny * (softRadius + 40)) / viewportH));
+        }
+      }
+    }
+
+    ball.u = Math.max(0.08, Math.min(0.92, bx / viewportW));
+    ball.v = Math.max(0.09, Math.min(0.72, by / viewportH));
+    ball.vu = vx / viewportW;
+    ball.vv = vy / viewportH;
+  }
+}
+
 function renderSingleGlobe(
   ctx: CanvasRenderingContext2D,
   ball: GlobeBody,
@@ -1218,11 +1325,13 @@ export function renderAsciiGlobeLayer(
     g.screenRadius = r;
   }
 
-  // 4. Step kinematics + soft elastic ball-to-ball collision
+  // 4. Step kinematics + soft elastic ball-to-ball collision + dancer avoidance
   if (animate) {
+    refreshDancerObstacles(viewportW, viewportH);
     stepSingleGlobe(worldState.globes[0], dt, timeSec, audioLevel, globalOrbitSmooth);
     stepSingleGlobe(worldState.globes[1], dt, timeSec, audioLevel, globalOrbitSmooth);
     resolveGlobeCollision(dt, viewportW, viewportH);
+    resolveDancerAvoidance(dt, viewportW, viewportH);
   } else {
     worldState.globes[0].u = 0.76;
     worldState.globes[0].v = 0.22;
