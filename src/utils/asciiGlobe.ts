@@ -556,7 +556,7 @@ function refreshDancerObstacles(viewportW: number, viewportH: number): void {
     if (rect.bottom < -40 || rect.top > viewportH + 40) return;
     const cx = rect.left + rect.width * 0.5;
     const cy = rect.top + rect.height * 0.5;
-    const radiusPx = Math.max(18, Math.hypot(rect.width, rect.height) * 0.5);
+    const radiusPx = Math.max(24, Math.max(rect.width, rect.height) * 0.36);
     next.push({
       u: cx / viewportW,
       v: cy / viewportH,
