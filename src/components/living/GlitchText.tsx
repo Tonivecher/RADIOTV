@@ -107,6 +107,7 @@ export const GlitchText: React.FC<GlitchTextProps> = ({
   const layersRef = useRef<HTMLSpanElement>(null);
   const animsRef = useRef<Animation[]>([]);
   const runningRef = useRef(false);
+  const watchdogRef = useRef<number | undefined>(undefined);
   const intensityRef = useRef(intensity);
   intensityRef.current = intensity;
 
@@ -121,6 +122,7 @@ export const GlitchText: React.FC<GlitchTextProps> = ({
   }
 
   const stop = useCallback(() => {
+    window.clearTimeout(watchdogRef.current);
     for (const a of animsRef.current) {
       a.cancel();
     }
@@ -148,7 +150,12 @@ export const GlitchText: React.FC<GlitchTextProps> = ({
 
       const base = layers.querySelector('[data-layer="base"]');
       if (base) {
-        run(base, [{ opacity: 0 }]);
+        run(
+          base,
+          Array.from({ length: s.frames }, (_, f) => ({
+            opacity: f === s.frames - 1 ? 1 : 0,
+          }))
+        );
       }
 
       const cuts = randomCuts(s.bands);
@@ -202,12 +209,21 @@ export const GlitchText: React.FC<GlitchTextProps> = ({
       animsRef.current = anims;
       runningRef.current = true;
       const last = anims[anims.length - 1];
+      const settleBurst = () => {
+        if (animsRef.current !== anims) return;
+        for (const a of anims) {
+          a.cancel();
+        }
+        animsRef.current = [];
+        runningRef.current = false;
+        window.clearTimeout(watchdogRef.current);
+        onDone?.();
+      };
+      // Watchdog: a throttled/paused compositor may never fire `finish`; never leave the title hidden.
+      window.clearTimeout(watchdogRef.current);
+      watchdogRef.current = window.setTimeout(settleBurst, s.frames * s.frame + 220);
       if (last) {
-        last.onfinish = () => {
-          animsRef.current = [];
-          runningRef.current = false;
-          onDone?.();
-        };
+        last.onfinish = settleBurst;
       }
     },
     [stop]

@@ -25,7 +25,7 @@ export interface MetroHeroProps {
 }
 
 const DEFAULT_VIDEO = '/media/metro-entry.mp4';
-const DEFAULT_MOBILE_VIDEO = '/media/metro-entry-mobile.mp4';
+const DEFAULT_MOBILE_VIDEO = '/media/metro-entry-mobile.mp4?v=2';
 const DEFAULT_POSTER = '/media/metro-entry-poster.jpg';
 const DEFAULT_SIGNATURE = {
   name: 'tonivecher.online',
