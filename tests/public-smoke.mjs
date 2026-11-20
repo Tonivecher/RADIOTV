@@ -139,7 +139,7 @@ try {
       audio &&
         (audio.currentSrc.includes('ch-deep') ||
           audio.currentSrc.includes('/media/') ||
-          audio.currentSrc.includes('/radio-media/')) &&
+          audio.currentSrc.includes('media-pl.tonivecher.online')) &&
         audio.readyState >= 2 &&
         !audio.error
     );
