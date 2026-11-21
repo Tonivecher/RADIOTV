@@ -148,28 +148,49 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
       }
 
       let timer: number | undefined;
+      let bootGraceTimer: number | undefined;
       const watchProgress = () => {
         window.clearTimeout(timer);
         timer = window.setTimeout(() => {
           controller.abort();
           if (active) {
-            fail('Видео загружается слишком долго. Попробуйте ещё раз.');
+            if (posterImgRef.current) {
+              ready();
+            } else {
+              fail('Видео загружается слишком долго. Попробуйте ещё раз.');
+            }
           }
         }, 25000);
       };
       watchProgress();
+      // Never block preloader beyond 2s waiting for ambient background MP4 (crucial for iOS Low Power / background tabs).
+      bootGraceTimer = window.setTimeout(() => {
+        if (active) {
+          ready();
+        }
+      }, 2000);
+
+      // Always keep poster image warmed for instant ASCII backdrop & safe fallback.
+      if (!posterImgRef.current) {
+        const posterImg = new Image();
+        posterImg.onload = () => {
+          if (active) {
+            posterImgRef.current = posterImg;
+            setPosterLoadedTick((t) => t + 1);
+            if (reducedMotion || paused) {
+              ready();
+            }
+          }
+        };
+        posterImg.src = posterUrl;
+      } else if (reducedMotion || paused) {
+        ready();
+      }
 
       const load = async () => {
         try {
           if (reducedMotion || paused) {
-            const img = new Image();
-            img.src = posterUrl;
-            await img.decode();
-            if (active) {
-              posterImgRef.current = img;
-              setPosterLoadedTick((t) => t + 1);
-              ready();
-            }
+            return;
           } else if (!cachedUrl.current) {
             setPreparing(true);
             const res = await fetch(source, {
@@ -217,10 +238,15 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
           }
         } catch {
           if (active && !controller.signal.aborted) {
-            fail('Не удалось загрузить фон. Попробуйте ещё раз.');
+            if (posterImgRef.current) {
+              ready();
+            } else {
+              fail('Не удалось загрузить фон. Попробуйте ещё раз.');
+            }
           }
         } finally {
           window.clearTimeout(timer);
+          window.clearTimeout(bootGraceTimer);
         }
       };
 
@@ -228,6 +254,7 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
       return () => {
         active = false;
         window.clearTimeout(timer);
+        window.clearTimeout(bootGraceTimer);
         controller.abort();
       };
     }, [source, retry, localRetry, reducedMotion, paused]);
@@ -290,12 +317,12 @@ export const EveningBackground = forwardRef<BackgroundHandle, EveningBackgroundP
         if (!confirmed && posterImgRef.current) {
           confirm(true);
         }
-      }, 2200);
+      }, 1500);
       const timer = window.setTimeout(() => {
         if (!confirmed) {
           confirm(true);
         }
-      }, 6000);
+      }, 3200);
 
       if (video.readyState >= 2) {
         loaded();

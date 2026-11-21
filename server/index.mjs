@@ -82,8 +82,10 @@ const STATIC_MIME_TYPES = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
   '.mp4': 'video/mp4',
   '.woff2': 'font/woff2',
+  '.woff': 'font/woff',
   '.ico': 'image/x-icon',
   '.webmanifest': 'application/manifest+json',
 };
@@ -1004,10 +1006,14 @@ async function handleStaticFile(req, res, pathname) {
   const total = stat.size;
   const ext = path.extname(resolved).toLowerCase();
   const contentType = STATIC_MIME_TYPES[ext] || 'application/octet-stream';
+  const isImmutableAsset =
+    pathname.startsWith('/assets/') ||
+    pathname.startsWith('/media/metro-frames/') ||
+    (pathname.startsWith('/fonts/') && (ext === '.woff2' || ext === '.woff'));
   const cacheControl =
     ext === '.html'
       ? 'no-cache, no-store, must-revalidate'
-      : pathname.startsWith('/assets/')
+      : isImmutableAsset
         ? 'public, max-age=31536000, immutable'
         : 'public, max-age=3600';
 

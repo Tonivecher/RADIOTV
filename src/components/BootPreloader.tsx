@@ -55,17 +55,13 @@ export function BootPreloader({
     let active = true;
     setFontsReady(false);
     setFontError('');
-    // Never deadlock mobile Safari if a font face load stalls: allow entry after 3.5s grace.
+    // Never deadlock mobile Safari or background tabs if a font face load stalls: allow entry after 2.2s grace.
     const fallbackTimer = window.setTimeout(() => {
       if (active) {
         setFontsReady(true);
+        setFontError('');
       }
-    }, 3500);
-    const timer = window.setTimeout(() => {
-      if (active) {
-        setFontError('Шрифты загружаются слишком долго. Попробуйте ещё раз.');
-      }
-    }, 20000);
+    }, 2200);
 
     const load = async () => {
       try {
@@ -108,14 +104,15 @@ export function BootPreloader({
         }
 
         let loaded = false;
-        for (let attempt = 0; attempt < 4 && active; attempt++) {
-          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        for (let attempt = 0; attempt < 3 && active; attempt++) {
           await document.fonts.ready;
           try {
             const faces = await Promise.all([
-              document.fonts.load('400 24px Manrope', 'ToniVecherRadio Основной'),
+              document.fonts.load('400 16px Aeonik', 'ToniVecherRadio 0123456789'),
+              document.fonts.load('500 24px Aeonik', 'ToniVecherRadio DeepTech'),
+              document.fonts.load('400 24px Manrope', 'Основной'),
               document.fonts.load('500 24px Manrope', 'Настройте звук'),
-              document.fonts.load('400 16px Inter', 'Музыка на вечер Deep'),
+              document.fonts.load('400 16px Inter', 'Музыка на вечер'),
               document.fonts.load('500 16px Inter', 'Эфир'),
               document.fonts.load('600 16px Inter', 'Слушать'),
             ]);
@@ -129,26 +126,24 @@ export function BootPreloader({
           if (loaded) {
             break;
           }
-          if (attempt < 3) {
+          if (attempt < 2) {
             await new Promise<void>((resolve) =>
               window.setTimeout(resolve, 150 * (attempt + 1))
             );
           }
-        }
-        if (!loaded) {
-          throw new Error('Fonts unavailable');
         }
         if (active) {
           setFontsReady(true);
           setFontError('');
         }
       } catch {
+        // Fallback fonts (system-ui / Manrope / Inter) keep typography legible; never block radio entry.
         if (active) {
-          setFontError('Не удалось загрузить шрифты. Проверьте соединение и повторите.');
+          setFontsReady(true);
+          setFontError('');
         }
       } finally {
         window.clearTimeout(fallbackTimer);
-        window.clearTimeout(timer);
       }
     };
 
@@ -156,7 +151,6 @@ export function BootPreloader({
     return () => {
       active = false;
       window.clearTimeout(fallbackTimer);
-      window.clearTimeout(timer);
     };
   }, [fontRetry]);
 
@@ -165,33 +159,28 @@ export function BootPreloader({
     setPosterReady(false);
     setPosterError('');
     const poster = new Image();
-    const timer = window.setTimeout(() => {
+    // Background still image must never deadlock entry to music on iOS/background tabs.
+    const fallbackTimer = window.setTimeout(() => {
       if (active) {
-        setPosterError('Не удалось загрузить обложку. Попробуйте ещё раз.');
+        setPosterReady(true);
+        setPosterError('');
       }
-    }, 20000);
+    }, 1800);
 
     poster.onload = () => {
-      void poster
-        .decode()
-        .then(() => {
-          if (active) {
-            setPosterReady(true);
-            setPosterError('');
-          }
-        })
-        .catch(() => {
-          if (active) {
-            setPosterError('Не удалось открыть обложку. Попробуйте ещё раз.');
-          }
-        })
-        .finally(() => window.clearTimeout(timer));
+      window.clearTimeout(fallbackTimer);
+      if (active) {
+        setPosterReady(true);
+        setPosterError('');
+      }
+      void poster.decode().catch(() => {});
     };
 
     poster.onerror = () => {
-      window.clearTimeout(timer);
+      window.clearTimeout(fallbackTimer);
       if (active) {
-        setPosterError('Не удалось загрузить обложку. Попробуйте ещё раз.');
+        setPosterReady(true);
+        setPosterError('');
       }
     };
 
@@ -200,7 +189,7 @@ export function BootPreloader({
       active = false;
       poster.onload = null;
       poster.onerror = null;
-      window.clearTimeout(timer);
+      window.clearTimeout(fallbackTimer);
     };
   }, [posterRetry]);
 
@@ -290,11 +279,12 @@ export function BootPreloader({
     <MetroHero
       className={`moscow-intro moscow-intro--${phase}`}
       title="ВАГОН 4:20"
-      scrollHint={ready ? 'ПРОКРУТИ ВНИЗ' : `ЗАГРУЗКА ${loadPct}%`}
-      scrollSubHint={ready ? 'Листай вниз, чтобы открыть двери' : 'Подтягиваем вагон и эфир'}
+      scrollHint={ready ? 'ОТКРЫТЬ ДВЕРИ' : `ЗАГРУЗКА ${loadPct}%`}
+      scrollSubHint={ready ? 'Нажми сюда или листай вниз' : 'Подтягиваем вагон и эфир'}
       tagline="Твоя остановка. Двери открыты."
       canUnlock={ready}
       fastForward={phase === 'opening'}
+      onCueClick={ready && !busy ? () => void enter(true, false) : undefined}
       onUnlock={() => void enter(true, true)}
       onKeyDown={handleDialogKeyDown}
       ariaBusy={!ready || busy}
