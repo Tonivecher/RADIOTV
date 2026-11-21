@@ -152,7 +152,22 @@ export const HeroTransportStage: React.FC<HeroTransportStageProps> = ({
                 as="h1"
                 text="ToniVecherRadio"
                 trigger="both"
-                intensity="subtle"
+                intensity="strong"
+                variety
+                accent={
+                  channelId === 'ch-deep'
+                    ? '#f0867d'
+                    : channelId === 'ch-afterglow'
+                      ? '#b9a2f2'
+                      : '#f0c497'
+                }
+                secondaryAccent={
+                  channelId === 'ch-deep'
+                    ? '#6ce5dc'
+                    : channelId === 'ch-afterglow'
+                      ? '#64e2f5'
+                      : '#6ee0ea'
+                }
                 interactiveShadow
                 className="hero-display-title"
               />

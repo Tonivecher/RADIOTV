@@ -27,18 +27,10 @@ export interface AsciiRenderOptions {
   transferSurge?: number;
 }
 
-const TAU = Math.PI * 2;
-const MATRIX_CHARS = '·:;=+*#%@012345789∆∇◊░▒▓';
+const STREAM_CHARS = '012345789∆∇◊+:=·/';
 const GLITCH_STRIPS = ['01 // ∆◊', '░▒▓ :: 79', '∆ 104.2 // ░', '▓▒░ + #01'];
 const SAMPLE_INTERVAL_MS = 84;
-const ATLAS_TONE_ROWS = 4;
-
-interface ColorLuts {
-  key: string;
-  r: Uint8Array;
-  g: Uint8Array;
-  b: Uint8Array;
-}
+const ATLAS_TONE_ROWS = 3;
 
 interface CoverRect {
   sx: number;
@@ -74,27 +66,6 @@ function parseHexColor(hex: string): [number, number, number] {
     return [231, 187, 148];
   }
   return [(parsed >> 16) & 255, (parsed >> 8) & 255, parsed & 255];
-}
-
-function overlayChannel(base: number, tint: number): number {
-  return base < 128
-    ? (2 * base * tint) / 255
-    : 255 - (2 * (255 - base) * (255 - tint)) / 255;
-}
-
-function buildChannelLut(
-  tintChannel: number,
-  contrastFactor: number,
-  tintAlpha: number
-): Uint8Array {
-  const lut = new Uint8Array(256);
-  for (let i = 0; i < 256; i++) {
-    const contrasted = Math.max(0, Math.min(255, (i - 128) * contrastFactor + 128));
-    const blended =
-      contrasted * (1 - tintAlpha) + overlayChannel(contrasted, tintChannel) * tintAlpha;
-    lut[i] = clampByte(blended);
-  }
-  return lut;
 }
 
 function computeCoverRect(
@@ -161,7 +132,6 @@ export class AsciiDotsRenderer {
   private readonly atlasCanvas: HTMLCanvasElement;
   private readonly atlasCtx: CanvasRenderingContext2D;
 
-  private luts: ColorLuts | null = null;
   private atlasKey = '';
   private atlasSlot = 16;
   private vignetteGradient: CanvasGradient | null = null;
@@ -199,26 +169,9 @@ export class AsciiDotsRenderer {
     this.atlasCtx = atlasCtx;
   }
 
-  private ensureLuts(profile: AsciiChannelProfile): ColorLuts {
-    const contrast = this.config.contrast / 100;
-    const tintOpacity = this.config.tintOpacity / 100;
-    const key = `${profile.tintHex}|${contrast}|${tintOpacity}`;
-    if (this.luts && this.luts.key === key) {
-      return this.luts;
-    }
-    const [tr, tg, tb] = parseHexColor(profile.tintHex);
-    this.luts = {
-      key,
-      r: buildChannelLut(tr, contrast, tintOpacity),
-      g: buildChannelLut(tg, contrast, tintOpacity),
-      b: buildChannelLut(tb, contrast, tintOpacity),
-    };
-    return this.luts;
-  }
-
   /**
-   * Pre-render all Matrix glyphs into a compact 4-row sprite atlas (shadow, tint, highlight, rain-head).
-   * Drawing sprites with drawImage() avoids thousands of Skia CPU fillText() calls per frame in Chrome.
+   * Pre-render calm vertical stream glyphs into a compact 3-row sprite atlas
+   * (muted tail, primary channel tint, soft highlight — no strobing white head).
    */
   private ensureAtlas(profile: AsciiChannelProfile, cellSize: number): number {
     const slot = Math.max(12, Math.ceil(cellSize * 1.15));
@@ -232,23 +185,21 @@ export class AsciiDotsRenderer {
     const [hr, hg, hb] = parseHexColor(profile.highlightHex);
 
     const rowColors = [
-      // Row 0: muted shadow-midtone glyph
-      `rgb(${clampByte(sr * 0.45 + tr * 0.55)},${clampByte(sg * 0.45 + tg * 0.55)},${clampByte(sb * 0.45 + tb * 0.55)})`,
+      // Row 0: muted shadow-tint tail glyph
+      `rgb(${clampByte(sr * 0.32 + tr * 0.68)},${clampByte(sg * 0.32 + tg * 0.68)},${clampByte(sb * 0.32 + tb * 0.68)})`,
       // Row 1: primary channel tint glyph
-      `rgb(${clampByte(tr * 0.96)},${clampByte(tg * 0.96)},${clampByte(tb * 0.96)})`,
-      // Row 2: luminous highlight glyph
-      `rgb(${clampByte(Math.min(232, hr))},${clampByte(Math.min(228, hg))},${clampByte(Math.min(220, hb))})`,
-      // Row 3: warm rain-head glyph (never pure white)
-      `rgb(${clampByte(Math.min(234, hr * 0.5 + 236 * 0.5))},${clampByte(Math.min(228, hg * 0.5 + 228 * 0.5))},${clampByte(Math.min(218, hb * 0.5 + 214 * 0.5))})`,
+      `rgb(${clampByte(tr)},${clampByte(tg)},${clampByte(tb)})`,
+      // Row 2: soft mid-highlight glyph (restrained, never harsh white)
+      `rgb(${clampByte(Math.min(232, tr * 0.35 + hr * 0.65))},${clampByte(Math.min(226, tg * 0.35 + hg * 0.65))},${clampByte(Math.min(218, tb * 0.35 + hb * 0.65))})`,
     ];
 
-    const charCount = MATRIX_CHARS.length;
+    const charCount = STREAM_CHARS.length;
     this.atlasCanvas.width = charCount * slot;
     this.atlasCanvas.height = ATLAS_TONE_ROWS * slot;
     this.atlasCtx.clearRect(0, 0, this.atlasCanvas.width, this.atlasCanvas.height);
 
-    const fontPx = Math.max(9, Math.round(cellSize * 0.94));
-    this.atlasCtx.font = `700 ${fontPx}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
+    const fontPx = Math.max(10, Math.round(cellSize * 0.92));
+    this.atlasCtx.font = `500 ${fontPx}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
     this.atlasCtx.textAlign = 'center';
     this.atlasCtx.textBaseline = 'middle';
 
@@ -257,7 +208,7 @@ export class AsciiDotsRenderer {
       this.atlasCtx.fillStyle = rowColors[row];
       const cy = row * slot + half;
       for (let i = 0; i < charCount; i++) {
-        this.atlasCtx.fillText(MATRIX_CHARS[i], i * slot + half, cy);
+        this.atlasCtx.fillText(STREAM_CHARS[i], i * slot + half, cy);
       }
     }
 
@@ -473,20 +424,21 @@ export class AsciiDotsRenderer {
     const rows = Math.max(1, Math.ceil(height / cellSize));
     const crop = computeCoverRect(dims.width, dims.height, width, height, options.scale ?? 1);
 
-    // Organic glitch envelope modulated by live audio peaks + rare spontaneous ripples.
+    // Periodic clean video-slice glitch bursts in normal playback (no horizontal text strips in the sky),
+    // and continuous glitch surge during channel transfer portal.
     const animated = this.config.animated && options.animate;
+    const isPortalTransfer = Boolean(options.continuousGlitch) || transferSurge > 0.02;
     let effectiveGlitch = 0;
-    if (animated && (profile.glitchIntensity > 0.01 || transferSurge > 0.01)) {
-      if (options.continuousGlitch || transferSurge > 0.02) {
+    if (animated) {
+      if (isPortalTransfer) {
         effectiveGlitch = clamp01(profile.glitchIntensity + transferSurge * 0.52);
-      } else {
+      } else if (profile.glitchIntensity > 0.01) {
         const wave =
           0.5 +
-          0.28 * Math.sin(options.timeSec * 1.45) +
-          0.22 * Math.sin(options.timeSec * 0.57 + 1.7);
-        const burst = clamp01((wave - 0.62) / 0.32);
-        const audioKick = Math.max(0, audioLevel - 0.55) * 0.55;
-        effectiveGlitch = clamp01(profile.glitchIntensity * (0.2 + 0.8 * burst) + audioKick);
+          0.3 * Math.sin(options.timeSec * 1.18) +
+          0.2 * Math.sin(options.timeSec * 0.43 + 1.9);
+        const burst = clamp01((wave - 0.66) / 0.24);
+        effectiveGlitch = clamp01(profile.glitchIntensity * burst);
       }
     }
 
@@ -564,13 +516,13 @@ export class AsciiDotsRenderer {
         width,
         height,
         options.timeSec,
-        effectiveGlitch * 0.78,
+        effectiveGlitch * (isPortalTransfer ? 0.78 : 0.92),
         profile.accentGlowHex,
-        profile.glyphAccent > 0.2
+        isPortalTransfer && profile.glyphAccent > 0.2
       );
     }
 
-    // 3. Render Matrix-style ASCII character grid using pre-rendered Sprite Atlas (zero per-frame fillText)
+    // 3. Render calm, sparse vertical descending Matrix character streams using pre-rendered Sprite Atlas
     if (this.dotsCanvas.width !== pixelW || this.dotsCanvas.height !== pixelH) {
       this.dotsCanvas.width = pixelW;
       this.dotsCanvas.height = pixelH;
@@ -579,135 +531,83 @@ export class AsciiDotsRenderer {
     this.dotsCtx.clearRect(0, 0, width, height);
     this.dotsCtx.imageSmoothingEnabled = false;
 
-    const luts = this.ensureLuts(profile);
     const atlasSlot = this.ensureAtlas(profile, cellSize);
     const halfSlot = atlasSlot * 0.5;
     const atlas = this.atlasCanvas;
-
-    const pulseDepth = (0.16 + audioLevel * 0.22) * (this.config.animIntensity / 100);
-    const beatPhase = options.timeSec * (profile.grooveBpm / 120) * TAU;
-    const beatSwell = animated ? Math.pow(0.5 + 0.5 * Math.sin(beatPhase), 1.5) : 0.5;
-    const halfCols = cols * 0.5;
-    const halfRows = rows * 0.5;
-    const ptrCol = ptrX * cols;
-    const ptrRow = ptrY * rows;
     const halfCell = cellSize * 0.5;
-    const lumThreshold = 0.30 * (1 - asciiMix) + 0.12 * asciiMix;
-    const edgeGate = Math.max(0.015, (1 - asciiMix * 1.15) * 0.085);
-    const flickerBucket = animated ? Math.floor(options.timeSec * (7 + audioLevel * 7)) : 0;
-    const rainSpan = rows + 18;
-    const rainSpeedScale = 1 + transferSurge * 1.9 + audioLevel * 0.4;
-    const charCount = MATRIX_CHARS.length;
+    const charCount = STREAM_CHARS.length;
+
+    // Stratified sparse placement (~12–17% of columns in steady playback, denser only during portal transfer)
+    const stride = isPortalTransfer
+      ? 3
+      : Math.max(6, Math.min(9, Math.round(9.5 - asciiMix * 9)));
+    const rainSpeedScale = isPortalTransfer ? 1 + transferSurge * 1.6 : 1;
 
     for (let col = 0; col < cols; col++) {
+      const slot = Math.floor(col / stride);
+      const local = col - slot * stride;
+      const pick =
+        stride <= 3
+          ? Math.floor(pseudoRand(slot * 47.13 + 11.7) * stride)
+          : 1 + Math.floor(pseudoRand(slot * 47.13 + 11.7) * (stride - 2));
+      if (local !== pick) continue;
+
       const cx = col * cellSize + halfCell;
-      const dx = col - halfCols;
-      const colSeed = pseudoRand(col * 19.73 + 7.13);
-      const colActive = colSeed < 0.4 + asciiMix * 0.36 + transferSurge * 0.3;
-      const colSpeed = (3.0 + pseudoRand(col * 37.19) * 5.2) * rainSpeedScale;
-      const colPhase = pseudoRand(col * 71.41) * rainSpan;
-      const rainHead =
-        animated && colActive
-          ? ((options.timeSec * colSpeed + colPhase) % rainSpan) - 6
-          : -999;
+      const colSpeed = (0.85 + pseudoRand(col * 37.19 + 3.1) * 1.1) * rainSpeedScale;
+      const trailLen = 9 + Math.floor(pseudoRand(col * 53.17 + 1.9) * 8);
+      const extraGap = 6 + Math.floor(pseudoRand(col * 29.43 + 5.7) * 10);
+      const rainSpan = rows + trailLen + extraGap;
+      const colPhase = pseudoRand(col * 71.41 + 2.3) * rainSpan;
+      const travel = animated ? options.timeSec * colSpeed + colPhase : colPhase;
+      const cycleIdx = Math.floor(travel / rainSpan);
+      const rainHead = (travel % rainSpan) - 2;
 
-      for (let row = 0; row < rows; row++) {
-        const cy = row * cellSize + halfCell;
-        const dy = row - halfRows;
-        const rowOffset = row * cols;
-        const idx = (rowOffset + col) * 4;
-        const baseR = luts.r[pixels[idx]];
-        const baseG = luts.g[pixels[idx + 1]];
-        const baseB = luts.b[pixels[idx + 2]];
-        const lumByte = (54 * baseR + 183 * baseG + 19 * baseB) >> 8;
-        const lum = lumByte / 255;
+      const rowStart = Math.max(0, Math.floor(rainHead - trailLen) + 1);
+      const rowEnd = Math.min(rows - 1, Math.floor(rainHead));
+      if (rowStart > rowEnd) continue;
 
+      const colDepthAlpha = 0.68 + pseudoRand(col * 83.11 + 4.1) * 0.32;
+
+      for (let row = rowStart; row <= rowEnd; row++) {
         const rainDist = rainHead - row;
-        const inRainStream = animated && colActive && rainDist >= 0 && rainDist < 11;
-        const isRainHead = inRainStream && rainDist < 1.35;
-        const rainGain = inRainStream ? (1 - rainDist / 11) * (0.28 + asciiMix * 0.24) : 0;
+        if (rainDist < 0 || rainDist >= trailLen) continue;
 
-        if (lum + rainGain < lumThreshold) continue;
+        // Smooth fade-in at the leading edge (no strobing head) and gentle long tail fade-out
+        const headFade = clamp01(rainDist / 1.45);
+        const smoothHead = headFade * headFade * (3 - 2 * headFade);
+        const tailFade = Math.pow(1 - rainDist / trailLen, 1.3);
+        const cellStrength = smoothHead * tailFade;
+        const alpha = cellStrength * colDepthAlpha;
+        if (alpha < 0.03) continue;
 
-        const rightIdx = col + 1 < cols ? (rowOffset + col + 1) * 4 : idx;
-        const downIdx = row + 1 < rows ? ((row + 1) * cols + col) * 4 : idx;
-        const neighborDiff =
-          Math.max(
-            Math.abs(pixels[idx + 1] - pixels[rightIdx + 1]),
-            Math.abs(pixels[idx + 1] - pixels[downIdx + 1])
-          ) / 255;
-
-        const dCol = col - ptrCol;
-        const dRow = row - ptrRow;
-        const ptrDistSq = dCol * dCol + dRow * dRow;
-        const cursorLift = animated && ptrDistSq < 225 ? (1 - Math.sqrt(ptrDistSq) / 15) * 0.28 : 0;
-        const hashMatch =
-          ((col * 19 + row * 37 + flickerBucket * 5) & 15) < (3 + Math.round(asciiMix * 8));
-
-        if (
-          !inRainStream &&
-          neighborDiff < edgeGate &&
-          lum + cursorLift < 0.54 - asciiMix * 0.2 &&
-          !hashMatch
-        ) {
-          continue;
-        }
-
-        let effectiveEnergy = clamp01(
-          lum * 0.85 + neighborDiff * 0.55 + rainGain * 0.8 + cursorLift * 0.65
+        // Stable Matrix glyph per (col, row, cycle) so characters flow down calmly without flickering
+        const charIdx = Math.floor(
+          pseudoRand(col * 31.7 + row * 17.3 + cycleIdx * 13.1) * charCount
         );
-        if (animated) {
-          const dist = Math.hypot(dx, dy);
-          const wave = Math.sin(beatPhase - dist * 0.2 + col * 0.08);
-          const groovePulse = Math.pow(0.5 + 0.5 * wave, 1.35) * 2 - 1;
-          effectiveEnergy = clamp01(effectiveEnergy * (1 + pulseDepth * groovePulse));
-        }
+        const toneRow = rainDist < 1.35 ? 2 : cellStrength > 0.3 ? 1 : 0;
+        const cy = row * cellSize + halfCell;
 
-        let charIdx: number;
-        if (isRainHead || (inRainStream && ((row + flickerBucket) & 3) === 0)) {
-          const streamHash = (col * 29 + row * 17 + flickerBucket * 13) & 31;
-          charIdx = Math.min(charCount - 1, 8 + (streamHash % Math.max(1, charCount - 8)));
-        } else {
-          const baseIdx = Math.floor(effectiveEnergy * (charCount - 1));
-          const shimmer =
-            animated && ((col * 11 + row * 23 + flickerBucket) & 15) === 0 ? 1 : 0;
-          charIdx = Math.max(0, Math.min(charCount - 1, baseIdx + shimmer));
-        }
-
-        const toneRow = isRainHead
-          ? 3
-          : effectiveEnergy > 0.68 || (inRainStream && rainGain > 0.22)
-            ? 2
-            : effectiveEnergy > 0.38
-              ? 1
-              : 0;
-
-        const jitterX =
-          animated &&
-          (audioLevel > 0.38 || transferSurge > 0.1) &&
-          ((col + row + flickerBucket) & 7) === 0
-            ? (pseudoRand(col * 13 + row * 7 + flickerBucket) - 0.5) *
-              (2.0 * (audioLevel + transferSurge))
-            : 0;
-
+        this.dotsCtx.globalAlpha = alpha;
         this.dotsCtx.drawImage(
           atlas,
           charIdx * atlasSlot,
           toneRow * atlasSlot,
           atlasSlot,
           atlasSlot,
-          cx + jitterX - halfSlot,
+          cx - halfSlot,
           cy - halfSlot,
           atlasSlot,
           atlasSlot
         );
       }
     }
+    this.dotsCtx.globalAlpha = 1;
 
-    // 4. Composite luminous ASCII layer over live video via `screen` blend
-    const rhythmAlpha = animated ? 0.88 + 0.12 * beatSwell + audioLevel * 0.14 : 0.94;
-    const baseDotsAlpha = 0.24 + asciiMix * 0.5;
-    const dotsAlpha = clamp01(baseDotsAlpha * rhythmAlpha);
+    // 4. Composite calm vertical ASCII stream layer over live video via `screen` blend (steady opacity, no BPM pulse)
+    const baseDotsAlpha = 0.48 + asciiMix * 0.24;
+    const dotsAlpha = isPortalTransfer
+      ? clamp01(baseDotsAlpha + transferSurge * 0.24)
+      : clamp01(baseDotsAlpha);
 
     ctx.save();
     ctx.globalCompositeOperation = 'screen';
@@ -715,7 +615,7 @@ export class AsciiDotsRenderer {
     ctx.drawImage(this.dotsCanvas, 0, 0, width, height);
     ctx.restore();
 
-    if (effectiveGlitch > 0.04) {
+    if (isPortalTransfer && effectiveGlitch > 0.04) {
       this.drawDotsGlitchSlices(
         ctx,
         dpr,
@@ -742,7 +642,7 @@ export class AsciiDotsRenderer {
       );
     }
 
-    // 5. Single-pass lightweight bloom glow (width/10 x height/10)
+    // 5. Minimal steady bloom glow (no BPM or audio modulation)
     if (this.config.bloomEnabled && profile.bloomIntensity > 1) {
       const bloomW = Math.max(24, Math.round(width / 10));
       const bloomH = Math.max(18, Math.round(height / 10));
@@ -758,13 +658,7 @@ export class AsciiDotsRenderer {
 
       ctx.save();
       ctx.globalCompositeOperation = 'screen';
-      ctx.globalAlpha = Math.min(
-        0.58,
-        (profile.bloomIntensity / 100) *
-          0.85 *
-          dotsAlpha *
-          (animated ? 0.88 + 0.2 * beatSwell + audioLevel * 0.14 : 1)
-      );
+      ctx.globalAlpha = Math.min(0.22, (profile.bloomIntensity / 100) * 1.15 * dotsAlpha);
       ctx.drawImage(this.bloomCanvas, 0, 0, width, height);
       ctx.restore();
     }
@@ -781,7 +675,7 @@ export class AsciiDotsRenderer {
       sampleRows: rows,
       scale: options.scale ?? 1,
       animate: animated,
-      glitchStrength: effectiveGlitch,
+      glitchStrength: isPortalTransfer ? effectiveGlitch : 0,
       audioLevel,
       pointerX: ptrX,
       pointerY: ptrY,
