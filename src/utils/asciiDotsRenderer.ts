@@ -30,7 +30,8 @@ export interface AsciiRenderOptions {
 const STREAM_CHARS = '012345789∆∇◊+:=·/';
 const GLITCH_STRIPS = ['01 // ∆◊', '░▒▓ :: 79', '∆ 104.2 // ░', '▓▒░ + #01'];
 const SAMPLE_INTERVAL_MS = 84;
-const ATLAS_TONE_ROWS = 3;
+const ATLAS_TONE_ROWS = 4;
+const MATRIX_NEON_GREEN_HEX = '#39ff88';
 
 interface CoverRect {
   sx: number;
@@ -170,12 +171,12 @@ export class AsciiDotsRenderer {
   }
 
   /**
-   * Pre-render calm vertical stream glyphs into a compact 3-row sprite atlas
-   * (muted tail, primary channel tint, soft highlight — no strobing white head).
+   * Pre-render Matrix vertical stream glyphs into a compact 4-row sprite atlas
+   * blending the channel palette with subtle neon Matrix green (zero per-frame fillText/shadowBlur).
    */
   private ensureAtlas(profile: AsciiChannelProfile, cellSize: number): number {
     const slot = Math.max(12, Math.ceil(cellSize * 1.15));
-    const key = `${profile.shadowHex}|${profile.tintHex}|${profile.highlightHex}|${slot}`;
+    const key = `${profile.shadowHex}|${profile.tintHex}|${profile.highlightHex}|${slot}|neon`;
     if (this.atlasKey === key && this.atlasCanvas.width > 0) {
       return this.atlasSlot;
     }
@@ -185,12 +186,14 @@ export class AsciiDotsRenderer {
     const [hr, hg, hb] = parseHexColor(profile.highlightHex);
 
     const rowColors = [
-      // Row 0: muted shadow-tint tail glyph
-      `rgb(${clampByte(sr * 0.32 + tr * 0.68)},${clampByte(sg * 0.32 + tg * 0.68)},${clampByte(sb * 0.32 + tb * 0.68)})`,
-      // Row 1: primary channel tint glyph
-      `rgb(${clampByte(tr)},${clampByte(tg)},${clampByte(tb)})`,
-      // Row 2: soft mid-highlight glyph (restrained, never harsh white)
-      `rgb(${clampByte(Math.min(232, tr * 0.35 + hr * 0.65))},${clampByte(Math.min(226, tg * 0.35 + hg * 0.65))},${clampByte(Math.min(218, tb * 0.35 + hb * 0.65))})`,
+      // Row 0: muted tail blended with deep Matrix green
+      `rgb(${clampByte(sr * 0.25 + tr * 0.43 + 32 * 0.32)},${clampByte(sg * 0.25 + tg * 0.43 + 178 * 0.32)},${clampByte(sb * 0.25 + tb * 0.43 + 96 * 0.32)})`,
+      // Row 1: body glyph (channel tint infused with neon Matrix green)
+      `rgb(${clampByte(tr * 0.56 + 52 * 0.44)},${clampByte(tg * 0.56 + 236 * 0.44)},${clampByte(tb * 0.56 + 124 * 0.44)})`,
+      // Row 2: vibrant neon Matrix green with slight channel highlight harmony
+      `rgb(${clampByte(Math.min(220, hr * 0.26 + 86 * 0.74))},${clampByte(Math.min(252, hg * 0.26 + 255 * 0.74))},${clampByte(Math.min(220, hb * 0.26 + 148 * 0.74))})`,
+      // Row 3: soft phosphor-mint leading glyph
+      `rgb(${clampByte(Math.min(234, hr * 0.32 + 164 * 0.68))},${clampByte(Math.min(255, hg * 0.32 + 255 * 0.68))},${clampByte(Math.min(232, hb * 0.32 + 198 * 0.68))})`,
     ];
 
     const charCount = STREAM_CHARS.length;
@@ -198,8 +201,8 @@ export class AsciiDotsRenderer {
     this.atlasCanvas.height = ATLAS_TONE_ROWS * slot;
     this.atlasCtx.clearRect(0, 0, this.atlasCanvas.width, this.atlasCanvas.height);
 
-    const fontPx = Math.max(10, Math.round(cellSize * 0.92));
-    this.atlasCtx.font = `500 ${fontPx}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
+    const fontPx = Math.max(11, Math.round(cellSize * 0.94));
+    this.atlasCtx.font = `600 ${fontPx}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
     this.atlasCtx.textAlign = 'center';
     this.atlasCtx.textBaseline = 'middle';
 
@@ -537,25 +540,27 @@ export class AsciiDotsRenderer {
     const halfCell = cellSize * 0.5;
     const charCount = STREAM_CHARS.length;
 
-    // Stratified sparse placement (~12–17% of columns in steady playback, denser only during portal transfer)
+    // Stratified placement (~25–33% of columns in steady playback, always leaving breathing gaps between streams)
     const stride = isPortalTransfer
-      ? 3
-      : Math.max(6, Math.min(9, Math.round(9.5 - asciiMix * 9)));
+      ? 2
+      : Math.max(3, Math.min(4, Math.round(4.6 - asciiMix * 3.8)));
     const rainSpeedScale = isPortalTransfer ? 1 + transferSurge * 1.6 : 1;
+    // Slow, gentle breathing envelope (~4.6s period) for subtle neon green pulse at near-zero CPU cost
+    const neonPulse = animated ? 0.5 + 0.5 * Math.sin(options.timeSec * 1.35) : 0.5;
 
     for (let col = 0; col < cols; col++) {
       const slot = Math.floor(col / stride);
       const local = col - slot * stride;
       const pick =
-        stride <= 3
+        stride <= 2
           ? Math.floor(pseudoRand(slot * 47.13 + 11.7) * stride)
-          : 1 + Math.floor(pseudoRand(slot * 47.13 + 11.7) * (stride - 2));
+          : Math.floor(pseudoRand(slot * 47.13 + 11.7) * (stride - 1));
       if (local !== pick) continue;
 
       const cx = col * cellSize + halfCell;
       const colSpeed = (0.85 + pseudoRand(col * 37.19 + 3.1) * 1.1) * rainSpeedScale;
-      const trailLen = 9 + Math.floor(pseudoRand(col * 53.17 + 1.9) * 8);
-      const extraGap = 6 + Math.floor(pseudoRand(col * 29.43 + 5.7) * 10);
+      const trailLen = 11 + Math.floor(pseudoRand(col * 53.17 + 1.9) * 10);
+      const extraGap = 4 + Math.floor(pseudoRand(col * 29.43 + 5.7) * 8);
       const rainSpan = rows + trailLen + extraGap;
       const colPhase = pseudoRand(col * 71.41 + 2.3) * rainSpan;
       const travel = animated ? options.timeSec * colSpeed + colPhase : colPhase;
@@ -566,16 +571,19 @@ export class AsciiDotsRenderer {
       const rowEnd = Math.min(rows - 1, Math.floor(rainHead));
       if (rowStart > rowEnd) continue;
 
-      const colDepthAlpha = 0.68 + pseudoRand(col * 83.11 + 4.1) * 0.32;
+      const colBreath = animated
+        ? 0.86 + 0.14 * Math.sin(options.timeSec * 1.35 + col * 0.45)
+        : 0.94;
+      const colDepthAlpha = (0.78 + pseudoRand(col * 83.11 + 4.1) * 0.22) * colBreath;
 
       for (let row = rowStart; row <= rowEnd; row++) {
         const rainDist = rainHead - row;
         if (rainDist < 0 || rainDist >= trailLen) continue;
 
-        // Smooth fade-in at the leading edge (no strobing head) and gentle long tail fade-out
-        const headFade = clamp01(rainDist / 1.45);
+        // Smooth fade-in at the leading edge and readable long tail fade-out
+        const headFade = clamp01(rainDist / 1.25);
         const smoothHead = headFade * headFade * (3 - 2 * headFade);
-        const tailFade = Math.pow(1 - rainDist / trailLen, 1.3);
+        const tailFade = Math.pow(1 - rainDist / trailLen, 1.15);
         const cellStrength = smoothHead * tailFade;
         const alpha = cellStrength * colDepthAlpha;
         if (alpha < 0.03) continue;
@@ -584,7 +592,8 @@ export class AsciiDotsRenderer {
         const charIdx = Math.floor(
           pseudoRand(col * 31.7 + row * 17.3 + cycleIdx * 13.1) * charCount
         );
-        const toneRow = rainDist < 1.35 ? 2 : cellStrength > 0.3 ? 1 : 0;
+        const toneRow =
+          rainDist < 1.2 ? 3 : rainDist < 3.4 ? 2 : cellStrength > 0.34 ? 1 : 0;
         const cy = row * cellSize + halfCell;
 
         this.dotsCtx.globalAlpha = alpha;
@@ -603,10 +612,10 @@ export class AsciiDotsRenderer {
     }
     this.dotsCtx.globalAlpha = 1;
 
-    // 4. Composite calm vertical ASCII stream layer over live video via `screen` blend (steady opacity, no BPM pulse)
-    const baseDotsAlpha = 0.48 + asciiMix * 0.24;
+    // 4. Composite vertical Matrix stream layer over live video via `screen` blend
+    const baseDotsAlpha = 0.66 + asciiMix * 0.22 + (neonPulse - 0.5) * 0.1;
     const dotsAlpha = isPortalTransfer
-      ? clamp01(baseDotsAlpha + transferSurge * 0.24)
+      ? clamp01(baseDotsAlpha + transferSurge * 0.2)
       : clamp01(baseDotsAlpha);
 
     ctx.save();
@@ -642,7 +651,7 @@ export class AsciiDotsRenderer {
       );
     }
 
-    // 5. Minimal steady bloom glow (no BPM or audio modulation)
+    // 5. Ultra-lightweight pulsing neon Matrix green bloom (1/10th resolution canvas, zero per-glyph blur)
     if (this.config.bloomEnabled && profile.bloomIntensity > 1) {
       const bloomW = Math.max(24, Math.round(width / 10));
       const bloomH = Math.max(18, Math.round(height / 10));
@@ -652,13 +661,26 @@ export class AsciiDotsRenderer {
         this.bloomCanvas.height = bloomH;
       }
 
+      this.bloomCtx.globalCompositeOperation = 'source-over';
+      this.bloomCtx.globalAlpha = 1;
       this.bloomCtx.clearRect(0, 0, bloomW, bloomH);
       this.bloomCtx.imageSmoothingEnabled = true;
       this.bloomCtx.drawImage(this.dotsCanvas, 0, 0, bloomW, bloomH);
 
+      // Tint only the downsampled glyph silhouette with Matrix neon green (costs ~0.02ms on ~144x90 buffer)
+      this.bloomCtx.globalCompositeOperation = 'source-atop';
+      this.bloomCtx.globalAlpha = 0.52 + 0.24 * neonPulse;
+      this.bloomCtx.fillStyle = MATRIX_NEON_GREEN_HEX;
+      this.bloomCtx.fillRect(0, 0, bloomW, bloomH);
+      this.bloomCtx.globalCompositeOperation = 'source-over';
+      this.bloomCtx.globalAlpha = 1;
+
       ctx.save();
       ctx.globalCompositeOperation = 'screen';
-      ctx.globalAlpha = Math.min(0.22, (profile.bloomIntensity / 100) * 1.15 * dotsAlpha);
+      ctx.globalAlpha = Math.min(
+        0.34,
+        (profile.bloomIntensity / 100) * (0.95 + 0.7 * neonPulse) * dotsAlpha
+      );
       ctx.drawImage(this.bloomCanvas, 0, 0, width, height);
       ctx.restore();
     }
