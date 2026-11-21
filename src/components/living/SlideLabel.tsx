@@ -1,4 +1,5 @@
 import React from 'react';
+import { LinkLadder } from './LinkLadder';
 
 interface SlideLabelProps {
   text: string;
@@ -7,16 +8,23 @@ interface SlideLabelProps {
 }
 
 /**
- * Vertical double-slot hover label adapted from KokonutUI SlideTextButton.
- * Pure CSS transform on group hover/focus, zero JS overhead.
+ * Pure CSS hover label upgraded with Unikorns LinkLadder cascade when
+ * primary and hover labels match, while keeping double-slot slide support
+ * if distinct hoverText is explicitly provided.
  */
-export const SlideLabel: React.FC<SlideLabelProps> = ({ text, hoverText, className = '' }) => (
-  <span className={`slide-label ${className}`.trim()}>
-    <span className="slide-label__track">
-      <span className="slide-label__primary">{text}</span>
-      <span className="slide-label__secondary" aria-hidden="true">
-        {hoverText ?? text}
+export const SlideLabel: React.FC<SlideLabelProps> = ({ text, hoverText, className = '' }) => {
+  if (!hoverText || hoverText === text) {
+    return <LinkLadder text={text} className={className} />;
+  }
+
+  return (
+    <span className={`slide-label ${className}`.trim()}>
+      <span className="slide-label__track">
+        <span className="slide-label__primary">{text}</span>
+        <span className="slide-label__secondary" aria-hidden="true">
+          {hoverText}
+        </span>
       </span>
     </span>
-  </span>
-);
+  );
+};

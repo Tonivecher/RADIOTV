@@ -25,6 +25,13 @@ interface FloatingBurst {
   kind: ReactionKind;
 }
 
+interface PresencePin {
+  id: number;
+  xPercent: number;
+  callsign: string;
+  kind: ReactionKind;
+}
+
 interface Particle {
   x: number;
   y: number;
@@ -263,6 +270,7 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
   const [commentText, setCommentText] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [bursts, setBursts] = useState<FloatingBurst[]>([]);
+  const [presencePins, setPresencePins] = useState<PresencePin[]>([]);
 
   const safeDuration = Math.max(1, durationSec || 0);
   const displayPosition = durationSec > 0 ? Math.max(0, Math.min(durationSec, positionSec)) : 0;
@@ -335,7 +343,7 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
 
   const particlesRef = useRef<Particle[]>([]);
   const knownMomentIdsRef = useRef<Set<number> | null>(null);
-  const wakeRef = useRef<() => void>(() => {});
+  const wakeRef = useRef<() => void>(() => { });
   const burstTimersRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
@@ -384,7 +392,7 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
     burstTimersRef.current.add(timerId);
   };
 
-  // Reactions arriving from other listeners also pop a particle burst.
+  // Reactions arriving from other listeners also pop a particle burst + live presence pin.
   useEffect(() => {
     const known = knownMomentIdsRef.current;
     if (known === null) {
@@ -394,8 +402,18 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
     for (const m of moments) {
       if (!known.has(m.id)) {
         known.add(m.id);
-        const pct = Math.max(2, Math.min(98, (m.timestampSec / safeDuration) * 100));
+        const pct = Math.max(6, Math.min(94, (m.timestampSec / safeDuration) * 100));
         spawnParticles(pct, m.reactionType);
+        const pinId = m.id;
+        setPresencePins((prev) => [
+          ...prev.slice(-3),
+          { id: pinId, xPercent: pct, callsign: m.callsign, kind: m.reactionType },
+        ]);
+        const timerId = window.setTimeout(() => {
+          burstTimersRef.current.delete(timerId);
+          setPresencePins((prev) => prev.filter((p) => p.id !== pinId));
+        }, 3200);
+        burstTimersRef.current.add(timerId);
       }
     }
   }, [moments, safeDuration, spawnParticles]);
@@ -503,7 +521,7 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
       themeObserver.disconnect();
       if (rafId) window.cancelAnimationFrame(rafId);
       running = false;
-      wakeRef.current = () => {};
+      wakeRef.current = () => { };
     };
   }, []);
 
@@ -587,13 +605,13 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
             {pinnedSec !== null && (
               <button
                 type="button"
-                className="waveform-unpin-chip"
+                className="waveform-unpin-chip num-tabular"
                 onClick={() => setPinnedSec(null)}
               >
                 Выбрано {formatTimecode(pinnedSec)} ×
               </button>
             )}
-            <div className="waveform-time-readout">
+            <div className="waveform-time-readout num-tabular">
               <strong className="waveform-time-readout__now">
                 <RollingNumber value={formatTimecode(displayPosition)} />
               </strong>
@@ -631,7 +649,7 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
             }
           }}
         >
-          {/* Floating Reaction Particles */}
+          {/* Floating Reaction Particles & Ephemeral Live SSE Presence Pins */}
           <div className="waveform-bursts" aria-hidden="true">
             {bursts.map((b) => (
               <div
@@ -640,6 +658,16 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
                 style={{ left: `${b.xPercent}%` }}
               >
                 {renderReactionIcon(b.kind, 22)}
+              </div>
+            ))}
+            {presencePins.map((pin) => (
+              <div
+                key={`pin-${pin.id}`}
+                className="waveform-presence-pin"
+                style={{ left: `${pin.xPercent}%` }}
+              >
+                {renderReactionIcon(pin.kind, 13)}
+                <span>@{pin.callsign}</span>
               </div>
             ))}
           </div>
@@ -659,9 +687,8 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
                   type="button"
                   className={`waveform-stem-btn ${isSelected ? 'is-active' : ''}`}
                   style={{ left: `${pct}%` }}
-                  title={`${formatTimecode(m.timestampSec)} · @${m.callsign}: ${
-                    m.comment || m.reactionType
-                  }`}
+                  title={`${formatTimecode(m.timestampSec)} · @${m.callsign}: ${m.comment || m.reactionType
+                    }`}
                   onClick={(e) => {
                     e.stopPropagation();
                     setSelectedMomentId(m.id);
@@ -684,7 +711,7 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
               aria-hidden="true"
             >
               <span
-                className="waveform-playhead__badge"
+                className="waveform-playhead__badge num-tabular"
                 style={{
                   transform:
                     progressRatio < 0.12
@@ -706,7 +733,7 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
               style={{ left: `${hoverRatio * 100}%` }}
               aria-hidden="true"
             >
-              <span className="waveform-hover-line__time">
+              <span className="waveform-hover-line__time num-tabular">
                 {formatTimecode(hoverRatio * safeDuration)}
               </span>
             </div>
@@ -719,7 +746,7 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
               style={{ left: `${(pinnedSec / safeDuration) * 100}%` }}
               aria-hidden="true"
             >
-              <span className="waveform-pinned-line__tag">
+              <span className="waveform-pinned-line__tag num-tabular">
                 {formatTimecode(pinnedSec)}
               </span>
             </div>
@@ -734,7 +761,7 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
                 <span className="waveform-whisper__icon">
                   {renderReactionIcon(activeMoment.reactionType, 16)}
                 </span>
-                <span className="waveform-whisper__time">
+                <span className="waveform-whisper__time num-tabular">
                   {formatTimecode(activeMoment.timestampSec)}
                 </span>
                 <strong className="waveform-whisper__author">@{activeMoment.callsign}</strong>
@@ -793,7 +820,7 @@ export const WaveformTimeline: React.FC<WaveformTimelineProps> = ({
 
           {errorText && <p role="alert" className="auth-error-box">{errorText}</p>}
           <form className="waveform-stamp-form" onSubmit={handleMomentSubmit}>
-            <span className="waveform-stamp-form__time">@{formatTimecode(targetSec)}</span>
+            <span className="waveform-stamp-form__time num-tabular">@{formatTimecode(targetSec)}</span>
             <input
               type="text"
               className="waveform-stamp-form__input"

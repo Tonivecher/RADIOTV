@@ -771,7 +771,7 @@ export const AsciiDancers: React.FC<AsciiDancersProps> = ({ channelId }) => {
     const layout = () => {
       const mobile = window.matchMedia('(max-width: 760px)').matches;
       cell = mobile ? 3.5 : 5.0;
-      dpr = Math.min(2, window.devicePixelRatio || 1);
+      dpr = Math.min(1.5, window.devicePixelRatio || 1);
       for (const d of dancers) {
         d.canvas.width = Math.round(COLS * cell * dpr);
         d.canvas.height = Math.round(ROWS * cell * dpr);
@@ -820,7 +820,7 @@ export const AsciiDancers: React.FC<AsciiDancersProps> = ({ channelId }) => {
       for (const d of dancers) {
         d.phase += dt * speed;
       }
-      if (nowMs - lastDraw < 33) return;
+      if (nowMs - lastDraw < 42) return;
       lastDraw = nowMs;
       const amp = energy.isPlaying ? 0.8 + energy.level * 0.5 : 0.62;
       for (const d of dancers) {

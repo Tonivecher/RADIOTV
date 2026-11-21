@@ -172,7 +172,7 @@ export function AmbientHeader({ children }: { children: ReactNode }) {
           {children}
           <button
             type="button"
-            className="island-header-expand"
+            className="island-header-expand button-circle button-circle--solo"
             aria-label="Показать управление радио"
             aria-expanded={!collapsed}
             onClick={() => {
@@ -184,18 +184,34 @@ export function AmbientHeader({ children }: { children: ReactNode }) {
               );
             }}
           >
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              aria-hidden="true"
-            >
-              <path d="m7 10 5 5 5-5" />
-            </svg>
+            <span className="button-circle__icon-wrap" aria-hidden="true">
+              <span className="button-circle__base-icon">
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                >
+                  <path d="m7 10 5 5 5-5" />
+                </svg>
+              </span>
+              <span className="button-circle__mask-icon">
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                >
+                  <path d="m7 10 5 5 5-5" />
+                </svg>
+              </span>
+            </span>
           </button>
         </div>
       </motion.div>

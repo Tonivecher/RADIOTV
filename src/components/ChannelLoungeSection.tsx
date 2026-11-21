@@ -32,13 +32,9 @@ export const ChannelLoungeSection: React.FC<ChannelLoungeSectionProps> = ({
   };
 
   return (
-    <motion.section
-      initial={{ opacity: 0, y: reducedMotion ? 0 : 20 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, amount: 0.05 }}
-      transition={{ duration: 0.85, ease: [0.22, 1, 0.36, 1] }}
+    <section
       id="lounge-stage"
-      className="scroll-reveal-section lounge-stage-section"
+      className="scroll-reveal-section is-inview lounge-stage-section"
       aria-label="Выбор канала"
     >
       <RadioWavePaths channelId={channelId} />
@@ -89,7 +85,7 @@ export const ChannelLoungeSection: React.FC<ChannelLoungeSectionProps> = ({
                     />
                   )}
                   <div className="channel-lens-row__left">
-                    <span className="channel-lens-row__freq">
+                    <span className="channel-lens-row__freq num-tabular">
                       {String(idx + 1).padStart(2, '0')}
                     </span>
                     <strong className="channel-lens-row__name">
@@ -117,6 +113,6 @@ export const ChannelLoungeSection: React.FC<ChannelLoungeSectionProps> = ({
         {/* Right Column: Airy Glass Live Ether Chat */}
         {children}
       </div>
-    </motion.section>
+    </section>
   );
 };

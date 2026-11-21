@@ -28,7 +28,7 @@ export const RollingNumber: React.FC<RollingNumberProps> = ({ value, className =
   flipSeqRef.current = seqs;
 
   return (
-    <span className={`rolling-number ${className}`.trim()}>
+    <span className={`rolling-number num-tabular ${className}`.trim()}>
       <span className="visually-hidden">{value}</span>
       <span aria-hidden="true" className="rolling-number__slots">
         {chars.map((ch, idx) => {

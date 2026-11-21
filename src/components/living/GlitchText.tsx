@@ -153,7 +153,8 @@ export const GlitchText: React.FC<GlitchTextProps> = ({
         run(
           base,
           Array.from({ length: s.frames }, (_, f) => ({
-            opacity: f === s.frames - 1 ? 1 : 0,
+            // Keep base legible throughout bursts so the main title never flashes blank in Chrome.
+            opacity: f === s.frames - 1 ? 1 : swap ? 0.45 : 0.72,
           }))
         );
       }

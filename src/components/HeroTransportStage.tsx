@@ -101,11 +101,7 @@ export const HeroTransportStage: React.FC<HeroTransportStageProps> = ({
   };
 
   return (
-    <motion.section
-      initial={{ opacity: 0, y: reducedMotion ? 0 : 18 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, amount: 0.05 }}
-      transition={{ duration: 0.85, ease: [0.22, 1, 0.36, 1] }}
+    <section
       id="ether-stage"
       className="scroll-reveal-section is-inview hero-stage-section"
       aria-label="Прямой эфир и интерактивная аудиоволна"
@@ -136,12 +132,7 @@ export const HeroTransportStage: React.FC<HeroTransportStageProps> = ({
         />
       </div>
 
-      <motion.div
-        className="hero-editorial-grid"
-        initial={{ opacity: 0, y: reducedMotion ? 0 : 18 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.9, delay: 0.12, ease: [0.22, 1, 0.36, 1] }}
-      >
+      <div className="hero-editorial-grid">
         <FloatPanel className="hero-title-region" depth={0.9}>
           <div className="hero-editorial-grid__left">
             <div className="hero-eyebrow-line">
@@ -193,7 +184,7 @@ export const HeroTransportStage: React.FC<HeroTransportStageProps> = ({
           <div className="hero-transport-cluster">
             <div className={`sync-chip is-${syncView.tone}`} data-sync-state={syncSnapshot.state}>
               <span className="sync-chip__led" aria-hidden="true" />
-              <span className="sync-chip__text" aria-hidden="true">
+              <span className="sync-chip__text num-tabular" aria-hidden="true">
                 {syncView.label}
               </span>
               <span className="visually-hidden" role="status" aria-live="polite">
@@ -204,7 +195,7 @@ export const HeroTransportStage: React.FC<HeroTransportStageProps> = ({
             <AttractPlayButton
               isPlaying={isPlaying}
               onClick={onTogglePlay}
-              className={`magnetic-cta magnetic-cta--hero ${isPlaying ? 'is-playing' : ''}`}
+              className={`magnetic-cta magnetic-cta--hero button-circle button-circle--hero ${isPlaying ? 'is-playing' : ''}`}
               ariaLabel={isPlaying ? 'Пауза эфира' : 'Слушать радио'}
             >
               <span className="magnetic-cta__halo" aria-hidden="true" />
@@ -221,8 +212,13 @@ export const HeroTransportStage: React.FC<HeroTransportStageProps> = ({
                   <span className="magnetic-cta__label">
                     {isPlaying ? 'Пауза' : 'Слушать радио'}
                   </span>
-                  <span className="magnetic-cta__pod">
-                    {isPlaying ? <PauseSignalIcon size={18} /> : <PlaySignalIcon size={18} />}
+                  <span className="magnetic-cta__pod button-circle__icon-wrap">
+                    <span className="button-circle__base-icon">
+                      {isPlaying ? <PauseSignalIcon size={16} /> : <PlaySignalIcon size={16} />}
+                    </span>
+                    <span className="button-circle__mask-icon">
+                      {isPlaying ? <PauseSignalIcon size={16} /> : <PlaySignalIcon size={16} />}
+                    </span>
                   </span>
                 </motion.span>
               </AnimatePresence>
@@ -283,14 +279,14 @@ export const HeroTransportStage: React.FC<HeroTransportStageProps> = ({
                     style={{ left: `calc(${masterGain}% - 6px)` }}
                   />
                 </div>
-                <span className="glass-volume-val">
+                <span className="glass-volume-val num-tabular">
                   <RollingNumber value={`${masterGain}%`} />
                 </span>
               </div>
             </div>
           </div>
         </FloatPanel>
-      </motion.div>
+      </div>
 
       <WaveformTimeline
         peaks={peaks}
@@ -303,6 +299,6 @@ export const HeroTransportStage: React.FC<HeroTransportStageProps> = ({
         onLikeMoment={onLikeMoment}
         renderReactionIcon={renderReactionIcon}
       />
-    </motion.section>
+    </section>
   );
 };

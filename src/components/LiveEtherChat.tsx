@@ -81,7 +81,7 @@ export const LiveEtherChat: React.FC<LiveEtherChatProps> = ({
           </div>
 
           <div className="chat-header__right">
-            <span className="chat-online-pill">
+            <span className="chat-online-pill num-tabular">
               <span className="pulse-beacon is-live">
                 <span className="pulse-beacon__core" />
                 <span className="pulse-beacon__ring" />
@@ -126,7 +126,7 @@ export const LiveEtherChat: React.FC<LiveEtherChatProps> = ({
               <article key={msg.id} className="chat-entry">
                 <div className="chat-entry__meta">
                   <strong className="chat-entry__author">@{msg.callsign}</strong>
-                  <span className="chat-entry__stamp">
+                  <span className="chat-entry__stamp num-tabular">
                     {msg.setCode.replace('TRANSMISSION // ', '')} ·{' '}
                     {formatTimecode(msg.setTimestampSec)}
                   </span>
@@ -190,7 +190,7 @@ export const LiveEtherChat: React.FC<LiveEtherChatProps> = ({
         )}
         {/* Message Composer */}
         <form className="chat-composer" onSubmit={handleSubmit}>
-          <div className="chat-composer__status">
+          <div className="chat-composer__status num-tabular">
             <span>Сет: {activeSetCode.replace('TRANSMISSION // ', '')}</span>
             <span>
               Сейчас: <RollingNumber value={formatTimecode(currentPositionSec)} />
@@ -208,11 +208,14 @@ export const LiveEtherChat: React.FC<LiveEtherChatProps> = ({
             />
             <button
               type="submit"
-              className="magnetic-cta magnetic-cta--compact"
+              className="magnetic-cta magnetic-cta--compact button-circle button-circle--hero"
               disabled={sending}
             >
               <span>{sending ? 'Отправляем…' : 'Отправить'}</span>
-              <span className="magnetic-cta__pod" aria-hidden="true">↗</span>
+              <span className="magnetic-cta__pod button-circle__icon-wrap" aria-hidden="true">
+                <span className="button-circle__base-icon">↗</span>
+                <span className="button-circle__mask-icon">↗</span>
+              </span>
             </button>
           </div>
         </form>

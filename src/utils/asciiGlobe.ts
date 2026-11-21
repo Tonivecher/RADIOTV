@@ -504,7 +504,7 @@ function pickNewBallTarget(ball: GlobeBody, nowSec: number, gentleGlide = false)
 
 function refreshTitleAnchor(viewportW: number, viewportH: number): void {
   const nowMs = performance.now();
-  if (nowMs - worldState.lastTitleMeasureMs < 450) return;
+  if (nowMs - worldState.lastTitleMeasureMs < 1200) return;
   worldState.lastTitleMeasureMs = nowMs;
 
   const titleEl = document.querySelector<HTMLElement>('.hero-display-title');
@@ -540,7 +540,7 @@ function refreshTitleAnchor(viewportW: number, viewportH: number): void {
 
 function refreshDancerObstacles(viewportW: number, viewportH: number): void {
   const nowMs = performance.now();
-  if (nowMs - worldState.lastDancerMeasureMs < 350) return;
+  if (nowMs - worldState.lastDancerMeasureMs < 1200) return;
   worldState.lastDancerMeasureMs = nowMs;
 
   if (viewportW <= 0 || viewportH <= 0) {

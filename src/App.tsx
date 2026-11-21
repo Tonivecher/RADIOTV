@@ -25,6 +25,7 @@ import {
   SpatialMotionProvider,
 } from './components/SpatialMotion';
 import { StationWordmark } from './components/StationWordmark';
+import { LinkLadder } from './components/living/LinkLadder';
 import { SlideLabel } from './components/living/SlideLabel';
 import { updateReactiveAudioState } from './audio/reactiveTelemetry';
 import { resolveThemeForChannel } from './constants/ascii';
@@ -113,6 +114,9 @@ export const App: React.FC = () => {
     radioLive.radioState.peaks,
   ]);
 
+  const { switchChannelState } = radioLive;
+  const { prepareForChannelSwitch } = transport;
+
   // Every channel switch updates transport flags before React swaps <audio src>
   const selectChannel = useCallback(
     (next: string) => {
@@ -130,10 +134,10 @@ export const App: React.FC = () => {
       } else {
         setPortalTransition(null);
       }
-      transport.prepareForChannelSwitch();
-      radioLive.switchChannelState(next);
+      prepareForChannelSwitch();
+      switchChannelState(next);
     },
-    [radioLive, showBootloader, transport]
+    [radioLive.channelIdRef, showBootloader, prepareForChannelSwitch, switchChannelState]
   );
 
   useMediaSession({
@@ -368,7 +372,7 @@ export const App: React.FC = () => {
           <audio
             ref={transport.dspAudioRef}
             src={transport.dspAudioSource}
-            preload="none"
+            preload={!dsp.isDspBypassed ? 'auto' : 'none'}
             playsInline
             crossOrigin="anonymous"
             onPlay={() => transport.handleAudioPlay('dsp')}
@@ -433,7 +437,7 @@ export const App: React.FC = () => {
                       <button
                         key={ch.id}
                         type="button"
-                        className={`island-channel-btn ${isActive ? 'is-active' : ''}`}
+                        className={`island-channel-btn living-hover-btn ${isActive ? 'is-active' : ''}`}
                         onClick={() => selectChannel(ch.id)}
                         aria-pressed={isActive}
                       >
@@ -451,7 +455,7 @@ export const App: React.FC = () => {
                         )}
                         <span className="island-channel-btn__content">
                           <LiveBeaconIcon size={14} />
-                          <span>{CHANNEL_COPY[ch.id]?.name || ch.name}</span>
+                          <LinkLadder text={CHANNEL_COPY[ch.id]?.name || ch.name} />
                         </span>
                       </button>
                     );
@@ -510,14 +514,10 @@ export const App: React.FC = () => {
                 renderReactionIcon={renderReactionIcon}
               />
 
-              {/* SECTION 02: SCROLL-REVEALED 10-BAND SPATIAL DSP CONSOLE */}
-              <motion.section
-                initial={{ opacity: 0, y: reducedMotion ? 0 : 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, amount: 0.05 }}
-                transition={{ duration: 0.85, ease: [0.22, 1, 0.36, 1] }}
+              {/* SECTION 02: 10-BAND SPATIAL DSP CONSOLE */}
+              <section
                 id="dsp-stage"
-                className="scroll-reveal-section dsp-stage-section"
+                className="scroll-reveal-section is-inview dsp-stage-section"
                 aria-label="Настройка звука"
               >
                 <DspEqualizerConsole
@@ -534,7 +534,7 @@ export const App: React.FC = () => {
                   onSaveCustomPreset={dsp.handleSaveCustomPreset}
                   onResetFlat={dsp.handleResetFlat}
                 />
-              </motion.section>
+              </section>
 
               {/* SECTION 03: SCROLL-REVEALED SPLIT STUDIO — CHANNELS & LIVE CHAT */}
               <ChannelLoungeSection

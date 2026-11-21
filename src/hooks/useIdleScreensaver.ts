@@ -2,11 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 
 interface UseIdleScreensaverOptions {
   enabled: boolean;
-  /** Inactivity threshold before entering screensaver mode (default: 9 seconds). */
+  /** Inactivity threshold before entering screensaver mode (default: 3 minutes). */
   timeoutMs?: number;
 }
 
-const DEFAULT_IDLE_MS = 9 * 1000;
+const DEFAULT_IDLE_MS = 3 * 60 * 1000;
 const POINTER_MOVE_THRESHOLD_PX = 3;
 
 /**

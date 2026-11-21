@@ -50,7 +50,7 @@ const MACRO_NOTCHES = Array.from({ length: 11 }, (_, i) => i * 10);
 const formatDb = (unit: number): string =>
   unit <= 0 ? '-∞' : (unit * -METER_FLOOR_DB + METER_FLOOR_DB).toFixed(1);
 
-export const DspEqualizerConsole: React.FC<DspEqualizerConsoleProps> = ({
+export const DspEqualizerConsole: React.FC<DspEqualizerConsoleProps> = React.memo(({
   bands,
   macros,
   activePresetId,
@@ -390,10 +390,24 @@ export const DspEqualizerConsole: React.FC<DspEqualizerConsoleProps> = ({
           <div className="dsp-top-bar__actions">
             <button
               type="button"
-              className={`glass-pill-btn dsp-bypass-switch ${!isBypassed ? 'is-engaged' : ''}`}
+              className={`glass-pill-btn dsp-bypass-switch button-circle button-circle--eq ${!isBypassed ? 'is-engaged' : ''}`}
               aria-pressed={!isBypassed}
               onClick={() => onChangeBypass(!isBypassed)}
             >
+              <span className="button-circle__icon-wrap dsp-bypass-switch__orb" aria-hidden="true">
+                <span className="button-circle__base-icon">
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+                    <path d="M8 2v5" />
+                    <path d="M4.6 4.4a5 5 0 1 0 6.8 0" />
+                  </svg>
+                </span>
+                <span className="button-circle__mask-icon">
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+                    <path d="M8 2v5" />
+                    <path d="M4.6 4.4a5 5 0 1 0 6.8 0" />
+                  </svg>
+                </span>
+              </span>
               <span className="dsp-bypass-switch__track" aria-hidden="true">
                 <motion.span
                   className="dsp-bypass-switch__thumb"
@@ -479,7 +493,7 @@ export const DspEqualizerConsole: React.FC<DspEqualizerConsoleProps> = ({
         {/* Open Two-Column Studio Workspace: 10 Optical Liquid-Glass Tube Faders + Spectrum & Detent Macros */}
         <div className="dsp-studio-matrix">
           <div className="dsp-faders-wrap">
-            <div className="dsp-scale-legend" aria-hidden="true">
+            <div className="dsp-scale-legend num-tabular" aria-hidden="true">
               <span>+2 dB</span>
               <span>0 dB</span>
               <span>−2 dB</span>
@@ -496,7 +510,7 @@ export const DspEqualizerConsole: React.FC<DspEqualizerConsoleProps> = ({
                 return (
                   <div key={cfg.freq} className="dsp-fader-column">
                     <span
-                      className={`dsp-fader-column__db ${
+                      className={`dsp-fader-column__db num-tabular ${
                         isBoost ? 'is-boost' : isCut ? 'is-cut' : ''
                       }`}
                     >
@@ -577,7 +591,7 @@ export const DspEqualizerConsole: React.FC<DspEqualizerConsoleProps> = ({
                       />
                     </div>
 
-                    <span className="dsp-fader-column__freq">{cfg.label}</span>
+                    <span className="dsp-fader-column__freq num-tabular">{cfg.label}</span>
                   </div>
                 );
               })}
@@ -587,9 +601,9 @@ export const DspEqualizerConsole: React.FC<DspEqualizerConsoleProps> = ({
           {/* Right: Live FFT Spectrum Lens + Stereo Peak Ribbon + 4 Graduated Detent Macro Controls */}
           <div className="dsp-side-rack">
             <div className="dsp-spectrum-lens">
-              <div className="dsp-spectrum-lens__head">
+              <div className="dsp-spectrum-lens__head num-tabular">
                 <span>Спектр · 32 Гц – 16 кГц</span>
-                <span className="dsp-stereo-db">
+                <span className="dsp-stereo-db num-tabular">
                   L {stereoReadout.left} dB · R {stereoReadout.right} dB
                 </span>
               </div>
@@ -683,4 +697,4 @@ export const DspEqualizerConsole: React.FC<DspEqualizerConsoleProps> = ({
       </div>
     </FloatPanel>
   );
-};
+});
