@@ -487,8 +487,10 @@ class RadioDspEngine {
       // Never ramp from 0 in the background.
       this.setUnityGain();
       if (running) return Promise.resolve(true);
-    } else if (withFadeIn || !running) {
+    } else if (withFadeIn) {
       this.scheduleFadeIn();
+    } else if (!running) {
+      this.scheduleFadeIn(0.08);
     } else {
       this.setUnityGain();
     }

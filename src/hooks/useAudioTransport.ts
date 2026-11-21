@@ -4,7 +4,8 @@ import { LiveClock, LivePhaseLock, SyncSnapshot } from '../audio/liveSync';
 import { IDLE_SYNC } from '../constants/radio';
 import { StreamEdgeCandidate } from '../types/radio';
 
-const STALL_FAILOVER_MS = 3500;
+const STALL_FAILOVER_MS = 12000;
+const SEEK_STALL_FAILOVER_MS = 15000;
 
 interface UseAudioTransportParams {
   channelId: string;
@@ -57,6 +58,30 @@ function waitForMetadata(audio: HTMLAudioElement, timeoutMs = 4500): Promise<boo
   });
 }
 
+function waitForCanPlay(audio: HTMLAudioElement, timeoutMs = 4500): Promise<boolean> {
+  if (audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+    return Promise.resolve(true);
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      audio.removeEventListener('canplay', onReady);
+      audio.removeEventListener('canplaythrough', onReady);
+      audio.removeEventListener('error', onFail);
+      resolve(ok);
+    };
+    const onReady = () => finish(true);
+    const onFail = () => finish(false);
+    const timer = window.setTimeout(() => finish(audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA), timeoutMs);
+    audio.addEventListener('canplay', onReady, { once: true });
+    audio.addEventListener('canplaythrough', onReady, { once: true });
+    audio.addEventListener('error', onFail, { once: true });
+  });
+}
+
 export function useAudioTransport({
   channelId,
   channelIdRef,
@@ -85,6 +110,7 @@ export function useAudioTransport({
   const dspAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const [streamRevision, setStreamRevision] = useState(0);
+  const [urlRefreshSeq, setUrlRefreshSeq] = useState(0);
   const [activeEdgeIdx, setActiveEdgeIdx] = useState(0);
   const [needsGesture, setNeedsGesture] = useState(false);
   const [audioError, setAudioError] = useState('');
@@ -120,12 +146,29 @@ export function useAudioTransport({
   const handoffToDirectRef = useRef<() => void>(() => {});
   const handoffToDspRef = useRef<() => Promise<void>>(async () => {});
 
+  const lockedEdgesRef = useRef<{ key: string; edges: StreamEdgeCandidate[] } | null>(null);
+  const latestEdgeInputsRef = useRef({ broadcastStreamUrl, broadcastStreamUrls });
+  latestEdgeInputsRef.current = { broadcastStreamUrl, broadcastStreamUrls };
+
+  const activeStreamKey =
+    isStateLoaded && stateChannelId === channelId && broadcastSetId
+      ? `${channelId}:${broadcastSetId}:${streamRevision}:${urlRefreshSeq}`
+      : '';
+
   const candidateEdges = useMemo<StreamEdgeCandidate[]>(() => {
-    if (!isStateLoaded || stateChannelId !== channelId || !broadcastSetId) {
+    if (!activeStreamKey) {
+      lockedEdgesRef.current = null;
       return [];
     }
-    if (Array.isArray(broadcastStreamUrls) && broadcastStreamUrls.length > 0) {
-      return broadcastStreamUrls.map((edge) => {
+    if (lockedEdgesRef.current?.key === activeStreamKey) {
+      return lockedEdgesRef.current.edges;
+    }
+
+    const { broadcastStreamUrl: streamUrl, broadcastStreamUrls: streamUrls } =
+      latestEdgeInputsRef.current;
+    let edges: StreamEdgeCandidate[];
+    if (Array.isArray(streamUrls) && streamUrls.length > 0) {
+      edges = streamUrls.map((edge) => {
         if (edge.url.startsWith('/api/radio/stream/')) {
           const sep = edge.url.includes('?') ? '&' : '?';
           return {
@@ -135,26 +178,20 @@ export function useAudioTransport({
         }
         return edge;
       });
+    } else if (streamUrl && (streamUrl.startsWith('https://') || streamUrl.startsWith('http://'))) {
+      edges = [{ id: 'primary', region: 'EDGE', url: streamUrl }];
+    } else {
+      edges = [
+        {
+          id: 'origin',
+          region: 'LOCAL',
+          url: `/api/radio/stream/${channelId}?set=${encodeURIComponent(String(broadcastSetId))}&load=${streamRevision}`,
+        },
+      ];
     }
-    if (broadcastStreamUrl && (broadcastStreamUrl.startsWith('https://') || broadcastStreamUrl.startsWith('http://'))) {
-      return [{ id: 'primary', region: 'EDGE', url: broadcastStreamUrl }];
-    }
-    return [
-      {
-        id: 'origin',
-        region: 'LOCAL',
-        url: `/api/radio/stream/${channelId}?set=${encodeURIComponent(String(broadcastSetId))}&load=${streamRevision}`,
-      },
-    ];
-  }, [
-    isStateLoaded,
-    stateChannelId,
-    channelId,
-    broadcastSetId,
-    broadcastStreamUrl,
-    broadcastStreamUrls,
-    streamRevision,
-  ]);
+    lockedEdgesRef.current = { key: activeStreamKey, edges };
+    return edges;
+  }, [activeStreamKey, channelId, broadcastSetId, streamRevision]);
 
   const candidateEdgesRef = useRef<StreamEdgeCandidate[]>(candidateEdges);
   candidateEdgesRef.current = candidateEdges;
@@ -228,8 +265,13 @@ export function useAudioTransport({
       const mediaDuration =
         Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : Infinity;
       const limit = Math.min(durationRef.current, mediaDuration) - 0.5;
+      const target = Math.max(0, Math.min(liveClock.getTargetSec(), limit));
+      // Avoid clearing an already-buffered seek position if we are already close to live.
+      if (audio.readyState >= 1 && Math.abs(audio.currentTime - target) < 2.0) {
+        return;
+      }
       try {
-        audio.currentTime = Math.max(0, Math.min(liveClock.getTargetSec(), limit));
+        audio.currentTime = target;
       } catch {
         // metadata not ready; phase lock will align once playing
       }
@@ -267,14 +309,25 @@ export function useAudioTransport({
         Boolean(audioSource);
 
       const dspAudio = dspAudioRef.current;
-      let mode: TransportMode = wantDsp ? 'dsp' : 'direct';
+      const expectedHref = audioSource ? new URL(audioSource, window.location.href).href : '';
+      const dspAudioHasCurrentStream = Boolean(
+        dspAudio &&
+        expectedHref &&
+        (dspAudio.currentSrc === expectedHref || dspAudio.src === expectedHref) &&
+        dspAudio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+      );
+      const canStartDspNow = wantDsp && dspAudioHasCurrentStream;
+      let mode: TransportMode = canStartDspNow ? 'dsp' : 'direct';
       let targetAudio: HTMLAudioElement = direct;
       let contextReady: Promise<boolean> = Promise.resolve(true);
 
       if (mode === 'dsp' && dspAudio) {
         setDspMediaArmed(true);
-        if (!dspAudio.src && audioSource) {
-          dspAudio.src = audioSource;
+        if (expectedHref && (dspAudio.currentSrc !== expectedHref || dspAudio.readyState === 0)) {
+          if (dspAudio.src !== expectedHref) {
+            dspAudio.src = audioSource;
+          }
+          dspAudio.load();
         }
         radioDsp.setPlaybackIntent(true);
         if (radioDsp.initAndAttach(dspAudio)) {
@@ -296,6 +349,12 @@ export function useAudioTransport({
       }
 
       if (mode === 'direct') {
+        if (expectedHref && (direct.currentSrc !== expectedHref || direct.readyState === 0)) {
+          if (direct.src !== expectedHref) {
+            direct.src = audioSource;
+          }
+          direct.load();
+        }
         direct.muted = false;
         direct.volume = gainToLinear(dsp.macros.masterGain);
         if (dspAudio && !dspAudio.paused) {
@@ -321,7 +380,7 @@ export function useAudioTransport({
         await Promise.race([
           played,
           new Promise<never>((_, reject) => {
-            playTimeout = window.setTimeout(() => reject(new Error('Playback timed out')), 12000);
+            playTimeout = window.setTimeout(() => reject(new Error('Playback timed out')), 20000);
           }),
         ]);
       } catch (err) {
@@ -385,6 +444,9 @@ export function useAudioTransport({
       loadingRef.current = false;
       setIsPlaying(true);
       setAudioBlocked(false);
+      if (wantDsp && mode === 'direct') {
+        void handoffToDspRef.current();
+      }
       return true;
     };
 
@@ -482,8 +544,10 @@ export function useAudioTransport({
 
     setDspMediaArmed(true);
     const expectedHref = new URL(audioSource, window.location.href).href;
-    if (dspAudio.currentSrc !== expectedHref) {
-      dspAudio.src = audioSource;
+    if (dspAudio.currentSrc !== expectedHref || dspAudio.readyState === 0) {
+      if (dspAudio.src !== expectedHref) {
+        dspAudio.src = audioSource;
+      }
       dspAudio.load();
     }
 
@@ -523,6 +587,12 @@ export function useAudioTransport({
       dspAudio.currentTime = Math.max(0, Math.min(targetTime, limit));
     } catch {
       // phase lock will align
+    }
+
+    // Buffer the target seek position on dspAudio before handing off from direct, avoiding silence gaps.
+    await waitForCanPlay(dspAudio, 4500);
+    if (!playIntentRef.current || dspStateRef.current.isDspBypassed || document.hidden) {
+      return;
     }
 
     handingOffRef.current = true;
@@ -633,20 +703,34 @@ export function useAudioTransport({
     if (anchorChannelRef.current !== channelIdRef.current) {
       return;
     }
+    const direct = audioRef.current;
+    const expectedHref = audioSource ? new URL(audioSource, window.location.href).href : '';
+    if (!direct || !expectedHref || (direct.currentSrc !== expectedHref && direct.src !== expectedHref)) {
+      return;
+    }
     resumeAfterLoadRef.current = false;
     loadingRef.current = false;
     void startPlaybackRef.current();
-  }, [anchorChannelRef, channelIdRef]);
+  }, [anchorChannelRef, channelIdRef, audioSource]);
 
   const prepareForChannelSwitch = useCallback(() => {
     loadingRef.current = true;
     ++transportEpochRef.current;
     playInFlightRef.current = null;
     handingOffRef.current = true;
-    if (dspAudioRef.current && !dspAudioRef.current.paused) {
-      dspAudioRef.current.pause();
+    if (dspAudioRef.current) {
+      if (!dspAudioRef.current.paused) {
+        dspAudioRef.current.pause();
+      }
+      dspAudioRef.current.removeAttribute('src');
+      dspAudioRef.current.load();
+    }
+    if (audioRef.current && !audioRef.current.paused) {
+      audioRef.current.pause();
     }
     handingOffRef.current = false;
+    activeModeRef.current = 'direct';
+    radioDsp.setPlaybackIntent(false);
     setIsPlaying(false);
     audioMetaLoadedRef.current = false;
     audioLoadedSetRef.current = null;
@@ -721,6 +805,11 @@ export function useAudioTransport({
   }, []);
 
   const handleAudioLoadedMetadata = useCallback(() => {
+    const direct = audioRef.current;
+    const expectedHref = audioSource ? new URL(audioSource, window.location.href).href : '';
+    if (!direct || !expectedHref || (direct.currentSrc !== expectedHref && direct.src !== expectedHref)) {
+      return;
+    }
     audioMetaLoadedRef.current = true;
     audioLoadedSetRef.current =
       anchorChannelRef.current === channelIdRef.current
@@ -732,7 +821,7 @@ export function useAudioTransport({
     }
     loadingRef.current = false;
     syncAudioToLiveClock();
-  }, [anchorChannelRef, channelIdRef, currentSetIdRef, syncAudioToLiveClock]);
+  }, [anchorChannelRef, channelIdRef, currentSetIdRef, syncAudioToLiveClock, audioSource]);
 
   const handleAudioPlay = useCallback(
     (sourceMode: TransportMode = 'direct') => {
@@ -865,7 +954,9 @@ export function useAudioTransport({
         urlRefreshTriedRef.current = true;
         failoverAttemptsRef.current = 0;
         resumeAfterLoadRef.current = playIntentRef.current;
-        void fetchRadioState(channelIdRef.current);
+        void fetchRadioState(channelIdRef.current).then(() => {
+          setUrlRefreshSeq((v) => v + 1);
+        });
         return;
       }
 
@@ -1019,13 +1110,12 @@ export function useAudioTransport({
     let ready = false;
     let waitingSince = Date.now();
     let lastSeekAt = 0;
-    let lastPrepareAt = 0;
     const expected = new URL(audioSource, window.location.href).href;
     const isMobileBrowser =
       window.matchMedia('(pointer: coarse)').matches ||
       /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     // Mobile browsers suspend <audio> preload until tap/scroll; allow instant entry once stream URL is live.
-    const gestureDeferGraceMs = isMobileBrowser ? 550 : 2400;
+    const gestureDeferGraceMs = isMobileBrowser ? 450 : 1800;
 
     const markReady = () => {
       if (!ready) {
@@ -1041,21 +1131,12 @@ export function useAudioTransport({
       if (!active) {
         return;
       }
-      // Never disturb background playback on iOS Lock Screen with boot/readiness seeks.
-      if (document.hidden && !bootVisibleRef.current) {
-        return;
-      }
-      if (bootVisibleRef.current && document.hidden) {
-        audio.pause();
-        waitingSince = Date.now();
-        return;
-      }
       if (audio.error) {
         return;
       }
 
-      // On mobile (or when autoplay/preload is deferred by the browser), do not lock the preloader at 67%.
-      // The actual audio stream starts cleanly inside the user's tap/scroll gesture in startPlayback().
+      // On mobile (or when autoplay/preload is deferred by the browser), do not lock the preloader.
+      // The actual audio stream starts cleanly inside the user's tap/click gesture in startPlayback().
       if (
         bootVisibleRef.current &&
         !ready &&
@@ -1066,70 +1147,62 @@ export function useAudioTransport({
         return;
       }
 
+      // Never disturb background playback on iOS Lock Screen with boot/readiness seeks.
+      if (document.hidden && !bootVisibleRef.current) {
+        return;
+      }
+      if (bootVisibleRef.current && document.hidden) {
+        audio.pause();
+        return;
+      }
+
       if (audio.currentSrc !== expected || !audioMetaLoadedRef.current) {
         return;
       }
 
+      // Seek cleanly once after metadata loads so playback starts near live without thrashing range requests.
       const target = Math.max(0, Math.min(liveClock.getTargetSec(), audio.duration - 0.5));
       if (
-        (bootVisibleRef.current || !ready) &&
+        bootVisibleRef.current &&
+        !ready &&
         !audio.seeking &&
-        Math.abs(audio.currentTime - target) > 1.2 &&
-        Date.now() - lastSeekAt > 1200
+        Math.abs(audio.currentTime - target) > 2.0 &&
+        Date.now() - lastSeekAt > 3000
       ) {
         lastSeekAt = Date.now();
         audio.currentTime = target;
         return;
       }
 
-      const point = bootVisibleRef.current || !ready ? target : audio.currentTime;
-      const reserve = audio.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA ? 1 : 2;
-      let buffered = false;
-      for (let i = 0; i < audio.buffered.length; i++) {
-        if (
-          audio.buffered.start(i) <= Math.max(0, point - 0.15) &&
-          audio.buffered.end(i) >= Math.min(audio.duration - 0.1, point + reserve)
-        ) {
-          buffered = true;
-        }
-      }
-
-      const next =
-        !audio.error &&
-        !audio.seeking &&
-        audio.readyState >= 3 &&
-        buffered &&
-        (!(bootVisibleRef.current || !ready) || Math.abs(audio.currentTime - target) <= 1.2);
-
-      if (next) {
+      if (!ready && !audio.error && !audio.seeking && audio.readyState >= 3) {
         markReady();
-      } else {
-        if (
-          !isMobileBrowser &&
-          bootVisibleRef.current &&
-          audio.paused &&
-          !audio.seeking &&
-          Date.now() - lastPrepareAt > 3000
-        ) {
-          lastPrepareAt = Date.now();
-          audio.muted = true;
-          void audio.play().catch(() => {
-            if (active && !ready) {
-              markReady();
-            }
-          });
-        }
       }
     };
 
+    const onVisible = () => {
+      if (!document.hidden && bootVisibleRef.current && !ready) {
+        waitingSince = Date.now();
+        check();
+      }
+    };
+
+    const deferTimer = window.setTimeout(() => {
+      if (active && bootVisibleRef.current && !ready && !audio.error) {
+        markReady();
+      }
+    }, gestureDeferGraceMs);
+
     const events = ['loadedmetadata', 'canplay', 'progress', 'seeked', 'loadeddata', 'waiting', 'stalled'] as const;
     events.forEach((name) => audio.addEventListener(name, check));
+    document.addEventListener('visibilitychange', onVisible);
     const interval = window.setInterval(check, 250);
     check();
 
     return () => {
       active = false;
+      window.clearTimeout(deferTimer);
       window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
       events.forEach((name) => audio.removeEventListener(name, check));
     };
   }, [audioSource, bootVisibleRef, liveClock]);
@@ -1171,6 +1244,7 @@ export function useAudioTransport({
 
       const snapshotTime = el.currentTime;
       lastStallTimeRef.current = snapshotTime;
+      const waitMs = el.seeking ? SEEK_STALL_FAILOVER_MS : STALL_FAILOVER_MS;
       stallTimerRef.current = window.setTimeout(() => {
         stallTimerRef.current = null;
         if (mode !== activeModeRef.current || !playIntentRef.current || handingOffRef.current) {
@@ -1182,11 +1256,12 @@ export function useAudioTransport({
         }
         const stuck =
           Math.abs(currentEl.currentTime - snapshotTime) < 0.05 &&
-          currentEl.readyState < HTMLMediaElement.HAVE_FUTURE_DATA;
+          currentEl.readyState < HTMLMediaElement.HAVE_FUTURE_DATA &&
+          !currentEl.seeking;
         if (stuck) {
           triggerEdgeFailover(mode);
         }
-      }, STALL_FAILOVER_MS);
+      }, waitMs);
     };
 
     const bind = (el: HTMLAudioElement | null, mode: TransportMode) => {

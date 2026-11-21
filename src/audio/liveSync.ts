@@ -24,21 +24,21 @@ export interface SyncSnapshot {
 
 const PHASE_LOCK = {
   /** Inside this window the lock is considered converged. */
-  DEADBAND_SEC: 0.08,
+  DEADBAND_SEC: 0.2,
   /** Drift needed to start compensating (hysteresis against the dead band). */
-  ENGAGE_SEC: 0.25,
+  ENGAGE_SEC: 0.65,
   /** Above this the rate correction is pinned at its maximum. */
-  SOFT_SEC: 1.5,
+  SOFT_SEC: 2.5,
   /** Above this a (micro-faded) seek replaces rate correction. */
-  HARD_SEC: 3.5,
+  HARD_SEC: 14.0,
   /** Drift at which the rate nudge reaches its full ±1.5 %. */
-  FULL_RATE_AT_SEC: 0.35,
+  FULL_RATE_AT_SEC: 1.2,
   RATE_AHEAD: 0.985,
   RATE_BEHIND: 1.015,
   /** Max playbackRate change per tick: glides to the target (and back to 1.0×) instead of stepping. */
   RATE_SLEW_PER_TICK: 0.003,
   TICK_MS: 250,
-  RESYNC_COOLDOWN_MS: 5000,
+  RESYNC_COOLDOWN_MS: 12000,
   /** How long LIVE RESYNC stays on screen after a seek. */
   RESYNC_HOLD_MS: 1200,
 } as const;
@@ -277,8 +277,8 @@ export class LivePhaseLock {
       const slew = PHASE_LOCK.RATE_SLEW_PER_TICK;
       next = current + Math.max(-slew, Math.min(slew, delta));
     }
-    if (Math.abs(next - 1) < 0.0005) next = 1;
-    if (Math.abs(next - current) < 1e-6) return;
+    if (Math.abs(next - 1) < 0.001) next = 1;
+    if (Math.abs(next - current) < (next === 1 ? 1e-6 : 0.002)) return;
 
     // Time-stretch instead of pitch-shift for the ±1.5 % nudge (Safari still needs the prefixed flag).
     audio.preservesPitch = true;
