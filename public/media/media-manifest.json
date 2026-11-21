@@ -121,50 +121,6 @@
         }
       },
       "faststart": null
-    },
-    {
-      "file": "metro-entry-mobile.mp4",
-      "bytes": 1129493,
-      "sha256": "4386893f9c88eafc88912de400f41cbabe7def47cd80e4d736e69377dfd54a8d",
-      "probe": {
-        "programs": [],
-        "stream_groups": [],
-        "streams": [
-          {
-            "codec_name": "h264",
-            "width": 640,
-            "height": 360,
-            "avg_frame_rate": "24/1"
-          }
-        ],
-        "format": {
-          "duration": "8.000000",
-          "size": "1129493"
-        }
-      },
-      "faststart": true
-    },
-    {
-      "file": "metro-entry.mp4",
-      "bytes": 5387731,
-      "sha256": "4897b8ed094fb4e56dc2d4707b059f4a35fb1b9d26a746f2d729b332eda34075",
-      "probe": {
-        "programs": [],
-        "stream_groups": [],
-        "streams": [
-          {
-            "codec_name": "h264",
-            "width": 1280,
-            "height": 720,
-            "avg_frame_rate": "24/1"
-          }
-        ],
-        "format": {
-          "duration": "8.000000",
-          "size": "5387731"
-        }
-      },
-      "faststart": true
     }
   ]
 }
